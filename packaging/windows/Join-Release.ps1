@@ -1,10 +1,9 @@
 param(
-    [ValidateSet('installer', 'portable')][string]$Edition = 'portable',
     [string]$Directory = $PSScriptRoot
 )
 $ErrorActionPreference = 'Stop'
 $folder = (Resolve-Path -LiteralPath $Directory).Path
-$name = if ($Edition -eq 'installer') { 'Img2Tex-1.0.0-Windows-x64-Setup.exe' } else { 'Img2Tex-1.0.0-Windows-x64-Portable.zip' }
+$name = 'Img2Tex-1.0.0-Windows-x64-Portable.zip'
 $output = Join-Path $folder $name
 if (Test-Path -LiteralPath $output) { throw "Output already exists; preserved: $output" }
 

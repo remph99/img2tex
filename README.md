@@ -13,7 +13,7 @@
 - **默认 LaTeX 格式**：支持无附加、`$…$`、`$$…$$`、`\(…\)`、`\[…\]`、`equation`，选择后自动记住。
 - **导出**：MathML、含可编辑 OMML 的 DOCX、PNG、SVG，以及受支持结构的 AsciiMath / Typst。
 - **本地历史**：SQLite 保存图像、原始/编辑后公式、设备和推理参数，可搜索与恢复。
-- **安装与便携**：两种发行包均包含模型、Python/Qt/PyTorch 运行时，无需另装 Python 或 conda。
+- **离线便携包**：包含模型、Python/Qt/PyTorch 运行时，无需另装 Python 或 conda。
 
 应用不提供内置截图或全局快捷键。截图与复制图片由用户自行完成；`Ctrl+V` 在应用窗口内粘贴图片，编辑器的纯文本粘贴及 `Ctrl+C` 复制保持正常行为。
 
@@ -23,32 +23,27 @@
 
 | 版本 | 合并后的文件 | 大小 | 使用方式 |
 | --- | --- | --- | --- |
-| 安装版 | `Img2Tex-1.0.0-Windows-x64-Setup.exe` | 约 3.45 GB | 运行安装向导，默认安装到当前用户目录，可创建快捷方式 |
 | 离线便携版 | `Img2Tex-1.0.0-Windows-x64-Portable.zip` | 约 3.66 GB | 完整解压后运行 `Img2Tex\Img2Tex.exe`，移动时保留整个文件夹 |
 
-GitHub Release 单个附件需小于 2 GiB，安装版分为 **13 个 256 MiB 上限分卷**，便携版分为 **2 个分卷**。**分卷不是单独可运行的安装程序或 ZIP，必须先合并。**
+GitHub Release 单个附件需小于 2 GiB，便携版分为 **2 个分卷**。**分卷不是单独可运行的安装程序或 ZIP，必须先合并。**
 
-1. 下载所选版本的**全部分卷**（安装版 `.part01`–`.part13`，便携版 `.part01`–`.part02`），以及 `Join-Release.ps1`、`SHA256SUMS.txt`、`SHA256SUMS.parts.txt`，放在同一文件夹。
+1. 下载便携版的**全部两个分卷**（`.part01`、`.part02`），以及 `Join-Release.ps1`、`SHA256SUMS.txt`、`SHA256SUMS.parts.txt`，放在同一文件夹。
 2. 在该文件夹的 PowerShell 中执行相应命令：
 
 ```powershell
-# 合并安装版
-.\Join-Release.ps1 -Edition installer
-# 或合并便携版
-.\Join-Release.ps1 -Edition portable
+# 合并便携版
+.\Join-Release.ps1
 ```
 
-脚本先校验分卷 SHA-256，再合并并校验完整文件；不会覆盖已有成品。随后运行 Setup.exe，或解压 Portable.zip。脚本源码见 [Join-Release.ps1](packaging/windows/Join-Release.ps1)。
+脚本先校验分卷 SHA-256，再合并并校验完整文件；不会覆盖已有成品。随后解压 Portable.zip 并运行其中的 Img2Tex.exe。脚本源码见 [Join-Release.ps1](packaging/windows/Join-Release.ps1)。
 
 若本机策略不允许运行脚本，可在命令提示符中使用系统 `copy /b` 合并，然后核对完整文件哈希：
 
 ```bat
-copy /b Img2Tex-1.0.0-Windows-x64-Setup.exe.part01+Img2Tex-1.0.0-Windows-x64-Setup.exe.part02+Img2Tex-1.0.0-Windows-x64-Setup.exe.part03+Img2Tex-1.0.0-Windows-x64-Setup.exe.part04+Img2Tex-1.0.0-Windows-x64-Setup.exe.part05+Img2Tex-1.0.0-Windows-x64-Setup.exe.part06+Img2Tex-1.0.0-Windows-x64-Setup.exe.part07+Img2Tex-1.0.0-Windows-x64-Setup.exe.part08+Img2Tex-1.0.0-Windows-x64-Setup.exe.part09+Img2Tex-1.0.0-Windows-x64-Setup.exe.part10+Img2Tex-1.0.0-Windows-x64-Setup.exe.part11+Img2Tex-1.0.0-Windows-x64-Setup.exe.part12+Img2Tex-1.0.0-Windows-x64-Setup.exe.part13 Img2Tex-1.0.0-Windows-x64-Setup.exe
 copy /b Img2Tex-1.0.0-Windows-x64-Portable.zip.part01+Img2Tex-1.0.0-Windows-x64-Portable.zip.part02 Img2Tex-1.0.0-Windows-x64-Portable.zip
 ```
 
 ```powershell
-Get-FileHash -Algorithm SHA256 .\Img2Tex-1.0.0-Windows-x64-Setup.exe
 Get-FileHash -Algorithm SHA256 .\Img2Tex-1.0.0-Windows-x64-Portable.zip
 # 与 SHA256SUMS.txt 比对
 ```
@@ -68,10 +63,10 @@ Get-FileHash -Algorithm SHA256 .\Img2Tex-1.0.0-Windows-x64-Portable.zip
 
 | 模式 | 历史、设置、日志与应用缓存 |
 | --- | --- |
-| 安装版 / 源码运行 | `%LOCALAPPDATA%\Img2Tex` |
+| 源码运行 | `%LOCALAPPDATA%\Img2Tex` |
 | 便携版 | `Img2Tex.exe` 同级的 `data` |
 
-安装版覆盖安装和卸载保留用户数据。便携版由同级 `portable.flag` 标识；请放在可写磁盘，退出后再备份或移动整个文件夹。随包模型使用相对路径，跟随程序迁移；手动选择的外部模型仍依赖绝对路径。
+便携版由同级 `portable.flag` 标识；请放在可写磁盘，退出后再备份或移动整个文件夹。随包模型使用相对路径，跟随程序迁移；手动选择的外部模型仍依赖绝对路径。
 
 历史数据库为 `history.sqlite3`，包含公式图像与源码。不要将使用过的 `data` 加入重新发行的压缩包。数据目录不可写时明确报错，不会切换到其他历史库。
 
@@ -153,13 +148,12 @@ python -s -m img2tex --smoke .\tests\fixtures\energy.png --device cuda --max-tok
 
 # 生成 dist\Img2Tex，需已准备完整模型
 .\scripts\build.ps1
-# 生成安装包、便携 ZIP、校验文件；需 Inno Setup 7
-python -s scripts/release.py --compiler 'C:\Tools\Inno Setup 7\ISCC.exe'
+
 ```
 
-发布输出默认为 `release\1.0.0`，目录必须尚不存在；通过 `--output` 可另选新目录，避免覆盖旧成品。版本唯一来源为 `src/img2tex/__init__.py`。
+正式便携发行包见 Releases；`dist` 是构建中间目录。版本唯一来源为 `src/img2tex/__init__.py`。
 
-v1.0.0 已通过 **170 项测试及 9 项子测试**，并在本机验证离线 CPU/CUDA 真实识别、便携目录迁移、首次安装/同版覆盖安装/卸载数据保留，以及可见界面的预览、复制和粘贴自动识别。分卷合并脚本另有发行工具检查。详见 [发行验收](docs/distribution-validation.md)、[功能验收](docs/validation.md)、[工作流](docs/workflow.md)。
+v1.0.0 已通过 **170 项测试及 9 项子测试**，并在本机验证离线 CPU/CUDA 真实识别、便携目录迁移、历史与设置保留，以及可见界面的预览、复制和粘贴自动识别。分卷合并脚本另有发行工具检查。详见 [发行验收](docs/distribution-validation.md)、[功能验收](docs/validation.md)、[工作流](docs/workflow.md)。
 
 ## 兼容范围与限制
 
