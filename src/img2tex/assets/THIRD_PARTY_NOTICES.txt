@@ -1,0 +1,5 @@
+KaTeX 0.16.22 — MIT license; https://katex.org/
+Official npm: https://registry.npmjs.org/katex/-/katex-0.16.22.tgz
+MathJax 3.2.2 — Apache License 2.0; https://www.mathjax.org/
+Public npm via jsDelivr: https://cdn.jsdelivr.net/npm/mathjax@3.2.2/es5/tex-svg-full.js
+Unmodified public distributions. Licenses included in katex/LICENSE and mathjax/LICENSE.

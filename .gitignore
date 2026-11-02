@@ -1,0 +1,13 @@
+analysis/
+models/
+build/
+dist/
+artifacts/
+*.log
+*.egg-info/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+.conda/
+.superpowers/
+*.sqlite3*
