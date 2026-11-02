@@ -127,6 +127,10 @@ class ModelProcess:
     def is_alive(self):
         return self._process is not None and self._process.is_alive()
 
+    @property
+    def is_busy(self):
+        return self._physical_task is not None
+
     def load(self, model_dir: str, device: str):
         if device not in {"cpu", "cuda"}:
             raise ValueError("请选择 CPU 或 CUDA。")

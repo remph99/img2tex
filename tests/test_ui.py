@@ -29,13 +29,18 @@ class EngineDouble:
         self.events = []
         self.loads = []
         self.stops = 0
+        self.is_busy = False
+        self.recognitions = []
 
     def load(self, directory, device):
         self.loads.append((directory, device))
         self.is_alive = True
 
     def recognize(self, image, task_id, max_new_tokens=1024):
+        if self.is_busy:
+            raise RuntimeError("previous task is physically busy")
         self.task_id = task_id
+        self.recognitions.append((image, task_id))
 
     def cancel(self):
         pass
@@ -64,9 +69,9 @@ def window(qtbot, tmp_path):
     store.close()
 
 
-def image_bytes():
+def image_bytes(color="white"):
     out = BytesIO()
-    Image.new("RGB", (32, 20), "white").save(out, format="PNG")
+    Image.new("RGB", (32, 20), color).save(out, format="PNG")
     return out.getvalue()
 
 
@@ -381,3 +386,218 @@ def test_ctrl_v_keeps_normal_text_paste_in_latex_editor(window, qtbot):
     qtbot.keyClick(widget.editor, Qt.Key.Key_V, modifier=Qt.KeyboardModifier.ControlModifier)
     assert widget.editor.toPlainText() == r"\sqrt{x}"
     assert widget.current_image is None
+
+
+@pytest.mark.parametrize("format_id,left,right", [
+    ("plain", "", ""), ("inline_dollars", "$", "$"), ("display_dollars", "$$", "$$"),
+    ("inline_parens", r"\(", r"\)"), ("display_brackets", r"\[", r"\]"),
+    ("equation", "\\begin{equation}\n", "\n\\end{equation}"),
+])
+def test_split_copy_menu_sets_persistent_default_without_changing_source(window, qtbot, format_id, left, right):
+    from PySide6.QtCore import Qt
+    from PySide6.QtWidgets import QApplication, QToolButton
+
+    widget, store, _, _ = window
+    widget.editor.setPlainText(r"\frac{a}{b}")
+    button = widget.copy_latex_button
+    assert button.popupMode() == QToolButton.ToolButtonPopupMode.MenuButtonPopup
+    action = next(action for action in button.menu().actions() if action.data() == format_id)
+    action.trigger()
+    assert action.isChecked()
+    assert sum(action.isChecked() for action in button.menu().actions()) == 1
+    assert store.get_setting("latex_wrapper") == format_id
+    widget.show()
+    qtbot.mouseClick(button, Qt.MouseButton.LeftButton, pos=button.rect().center())
+    assert QApplication.clipboard().text() == left + r"\frac{a}{b}" + right
+    assert widget.editor.toPlainText() == r"\frac{a}{b}"
+
+
+def test_saved_copy_default_restores_and_mathml_has_direct_button(qtbot, tmp_path):
+    from PySide6.QtCore import Qt
+    from PySide6.QtWidgets import QApplication
+
+    from img2tex.storage import Store
+    from img2tex.ui.main import MainWindow
+
+    store = Store(tmp_path / "copy.db")
+    store.set_setting("latex_wrapper", "display_brackets")
+    widget = MainWindow(store=store, engine=EngineDouble(), preview=PreviewDouble(),
+                        enable_system_integration=False)
+    qtbot.addWidget(widget)
+    try:
+        widget.editor.setPlainText("x^2")
+        widget.copy_latex()
+        assert QApplication.clipboard().text() == r"\[x^2\]"
+        widget.show()
+        qtbot.mouseClick(widget.copy_mathml_button, Qt.MouseButton.LeftButton,
+                         pos=widget.copy_mathml_button.rect().center())
+        mime = QApplication.clipboard().mimeData()
+        assert mime.hasFormat("application/mathml+xml")
+        assert "<msup>" in mime.text()
+    finally:
+        widget.close()
+        store.close()
+
+
+def paste_fixture(widget, data=None):
+    from PySide6.QtGui import QImage
+    from PySide6.QtWidgets import QApplication
+    QApplication.clipboard().setImage(QImage.fromData(data if data is not None else image_bytes()))
+    widget.paste_image()
+
+
+def test_paste_image_starts_recognition_without_recognize_click(window):
+    widget, _, engine, _ = window
+    widget.handle_event({"type": "ready", "device": "cpu"})
+    paste_fixture(widget)
+    assert len(engine.recognitions) == 1
+    assert widget._active_task == engine.task_id
+
+
+def test_first_paste_loads_model_then_recognizes_latest_image(window):
+    widget, _, engine, _ = window
+    paste_fixture(widget)
+    paste_fixture(widget, image_bytes("blue"))
+    assert len(engine.loads) == 1
+    assert engine.recognitions == []
+    engine.events.append({"type": "ready", "device": "cpu"})
+    widget._poll_engine()
+    assert len(engine.recognitions) == 1
+    assert engine.recognitions[-1][0] == widget.current_image.model_png
+
+
+def test_new_paste_waits_for_physical_cancellation_and_discards_late_result(window):
+    widget, store, engine, _ = start(window)
+    old_task = engine.task_id
+    engine.is_busy = True
+    paste_fixture(widget)
+    paste_fixture(widget, image_bytes("blue"))
+    assert len(engine.recognitions) == 1
+    engine.events.append(result(old_task))
+    widget._poll_engine()
+    assert not store.list_history()
+    assert len(engine.recognitions) == 1
+    # ModelProcess may suppress the stale terminal message after clearing busy.
+    engine.is_busy = False
+    widget._poll_engine()
+    assert len(engine.recognitions) == 2
+    assert engine.task_id != old_task
+    assert engine.recognitions[-1][0] == widget.current_image.model_png
+
+
+def test_cancel_pending_paste_prevents_automatic_start_after_load(window):
+    widget, _, engine, _ = window
+    paste_fixture(widget)
+    assert len(engine.loads) == 1
+    widget.cancel_recognition()
+    engine.events.append({"type": "ready", "device": "cpu"})
+    widget._poll_engine()
+    assert engine.recognitions == []
+
+
+def test_restoring_history_cancels_pending_paste_without_recognizing_history(window):
+    widget, store, engine, _ = window
+    record_id = store.add_result(result("history"), image_bytes())
+    paste_fixture(widget)
+    assert len(engine.loads) == 1
+    widget.restore_record(record_id)
+    engine.events.append({"type": "ready", "device": "cpu"})
+    widget._poll_engine()
+    assert engine.recognitions == []
+    assert widget.current_record_id == record_id
+
+
+def test_model_load_failure_stops_auto_paste_retry_loop(window):
+    widget, _, engine, _ = window
+    paste_fixture(widget)
+    engine.events.append({"type": "error", "message": "missing config.json", "device": "cpu"})
+    widget._poll_engine()
+    widget._poll_engine()
+    assert len(engine.loads) == 1
+    assert not engine.recognitions
+    assert "missing config.json" in widget.statusBar().currentMessage()
+
+
+def test_clipboard_local_image_file_also_starts_recognition(window, tmp_path):
+    from PySide6.QtCore import QMimeData, QUrl
+    from PySide6.QtWidgets import QApplication
+
+    widget, _, engine, _ = window
+    widget.handle_event({"type": "ready", "device": "cpu"})
+    image_path = tmp_path / "copied.png"
+    image_path.write_bytes(image_bytes())
+    mime = QMimeData()
+    mime.setUrls([QUrl.fromLocalFile(str(image_path))])
+    QApplication.clipboard().setMimeData(mime)
+    widget.paste_image()
+    assert len(engine.recognitions) == 1
+
+
+def test_paste_during_download_waits_for_completion_before_loading(window):
+    from PySide6.QtCore import QProcess
+
+    widget, _, engine, _ = window
+    widget._downloading_model = True
+    paste_fixture(widget)
+    assert not engine.loads
+    widget._download_finished(0, QProcess.ExitStatus.NormalExit)
+    widget._poll_engine()
+    assert len(engine.loads) == 1
+
+
+def test_failed_download_clears_queued_automatic_recognition(window):
+    from PySide6.QtCore import QProcess
+
+    widget, _, engine, _ = window
+    widget._downloading_model = True
+    paste_fixture(widget)
+    widget._download_finished(1, QProcess.ExitStatus.NormalExit)
+    widget._poll_engine()
+    assert not engine.loads
+    assert not widget.cancel_button.isEnabled()
+
+
+def test_invalid_paste_does_not_submit_an_old_image(window, tmp_path):
+    from PySide6.QtCore import QMimeData, QUrl
+    from PySide6.QtWidgets import QApplication
+
+    widget, _, engine, _ = window
+    widget.handle_event({"type": "ready", "device": "cpu"})
+    widget.load_image_bytes(image_bytes())
+    broken_path = tmp_path / "broken.png"
+    broken_path.write_bytes(b"invalid")
+    mime = QMimeData()
+    mime.setUrls([QUrl.fromLocalFile(str(broken_path))])
+    QApplication.clipboard().setMimeData(mime)
+    widget.paste_image()
+    widget._poll_engine()
+    assert not engine.recognitions
+
+
+def test_paste_without_model_directory_leaves_controls_usable(window):
+    widget, _, engine, _ = window
+    widget.model_path.clear()
+    paste_fixture(widget)
+    assert not engine.loads
+    assert widget.recognize_button.isEnabled()
+    assert not widget.cancel_button.isEnabled()
+    assert not widget._auto_recognition_pending
+    assert "模型目录" in widget.statusBar().currentMessage()
+
+
+@pytest.mark.parametrize("waiting_for", ["loading", "cancelling"])
+def test_edits_while_auto_paste_waits_are_not_overwritten(window, waiting_for):
+    widget, store, engine, _ = window
+    if waiting_for == "cancelling":
+        widget.handle_event({"type": "ready", "device": "cpu"})
+        engine.is_busy = True
+    paste_fixture(widget)
+    widget.editor.setPlainText("my correction")
+    if waiting_for == "loading":
+        engine.events.append({"type": "ready", "device": "cpu"})
+    else:
+        engine.is_busy = False
+    widget._poll_engine()
+    widget.handle_event(result(engine.task_id))
+    assert widget.editor.toPlainText() == "my correction"
+    assert store.list_history()[0]["latex_edited"] == "my correction"

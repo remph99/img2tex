@@ -7,7 +7,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from PySide6.QtCore import QEvent, QMimeData, QProcess, QProcessEnvironment, Qt, QTimer
-from PySide6.QtGui import QAction, QColor, QFont, QIcon, QImage, QKeySequence, QPainter, QPixmap
+from PySide6.QtGui import QAction, QActionGroup, QColor, QFont, QIcon, QImage, QKeySequence, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
@@ -39,6 +39,15 @@ from PySide6.QtWidgets import (
 from img2tex.model_setup import default_model_dir
 
 from .preview import FormulaPreview, pixmap_png
+
+LATEX_COPY_FORMATS = (
+    ("plain", "无特殊附加", "", ""),
+    ("inline_dollars", "$ … $ 格式", "$", "$"),
+    ("display_dollars", "$$ … $$ 格式", "$$", "$$"),
+    ("inline_parens", r"\( … \) 格式", r"\(", r"\)"),
+    ("display_brackets", r"\[ … \] 格式", r"\[", r"\]"),
+    ("equation", r"\begin{equation} … \end{equation} 格式", "\\begin{equation}\n", "\n\\end{equation}"),
+)
 
 
 def app_data_dir():
@@ -75,6 +84,8 @@ class MainWindow(QMainWindow):
         self.current_image = None
         self.current_record_id = None
         self._active_task = None
+        self._auto_recognition_pending = False
+        self._auto_editor_revision = 0
         self._task_image = None
         self._editor_revision = 0
         self._task_editor_revision = 0
@@ -131,7 +142,7 @@ class MainWindow(QMainWindow):
         local.setObjectName("localBadge")
         header.addWidget(local)
         layout.addLayout(header)
-        subtitle = QLabel("导入或粘贴公式图片，识别后可直接编辑与导出。")
+        subtitle = QLabel("粘贴公式图片即可自动识别，识别后可直接编辑与复制。")
         subtitle.setObjectName("muted")
         layout.addWidget(subtitle)
         splitter = QSplitter(Qt.Orientation.Horizontal)
@@ -150,7 +161,7 @@ class MainWindow(QMainWindow):
         self.image_label.setObjectName("imageDrop")
         scroll.setWidget(self.image_label)
         image_layout.addWidget(scroll, 1)
-        self.image_hint = QLabel("支持 PNG / JPEG / WEBP / BMP / TIFF\nCtrl+V 粘贴图片 · Ctrl+C 复制选中文本")
+        self.image_hint = QLabel("支持 PNG / JPEG / WEBP / BMP / TIFF\nCtrl+V 粘贴后自动识别")
         self.image_hint.setObjectName("muted")
         image_layout.addWidget(self.image_hint)
         splitter.addWidget(image_panel)
@@ -175,29 +186,57 @@ class MainWindow(QMainWindow):
         self.source_tabs.addTab(self.raw_output, "模型原始输出")
         result_layout.addWidget(self.source_tabs, 3)
         copy_row = QHBoxLayout()
-        self.wrapper_combo = QComboBox()
-        self.wrapper_combo.addItems(["纯 LaTeX", "$ … $", "$$ … $$", r"\( … \)", r"\[ … \]"])
-        copy_row.addWidget(self.wrapper_combo)
-        copy_latex = QPushButton("复制 LaTeX")
-        copy_latex.setObjectName("primary")
-        copy_latex.clicked.connect(self.copy_latex)
-        copy_row.addWidget(copy_latex)
-        export_button = QToolButton()
-        export_button.setText("复制 / 导出 ▾")
-        export_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
-        export_menu = QMenu(export_button)
+        self.copy_latex_button = QToolButton()
+        self.copy_latex_button.setText("复制 LaTeX")
+        self.copy_latex_button.setObjectName("copyButton")
+        self.copy_latex_button.setPopupMode(QToolButton.ToolButtonPopupMode.MenuButtonPopup)
+        self.copy_latex_button.clicked.connect(self.copy_latex)
+        latex_menu = QMenu(self.copy_latex_button)
+        self.latex_copy_group = QActionGroup(self)
+        self.latex_copy_group.setExclusive(True)
+        self._latex_wrapper_actions = {}
+        saved_wrapper = self.store.get_setting("latex_wrapper", "plain")
+        if saved_wrapper not in {item[0] for item in LATEX_COPY_FORMATS}:
+            saved_wrapper = "plain"
+        for format_id, label, _, _ in LATEX_COPY_FORMATS:
+            action = latex_menu.addAction(label)
+            action.setData(format_id)
+            action.setCheckable(True)
+            self.latex_copy_group.addAction(action)
+            action.setChecked(format_id == saved_wrapper)
+            action.triggered.connect(lambda checked=False, key=format_id: self._select_latex_wrapper(key))
+            self._latex_wrapper_actions[format_id] = action
+        self.copy_latex_button.setMenu(latex_menu)
+        self.copy_latex_button.setToolTip("默认复制格式：" + self._latex_wrapper_actions[saved_wrapper].text())
+        copy_row.addWidget(self.copy_latex_button)
+        self.copy_mathml_button = QToolButton()
+        self.copy_mathml_button.setText("复制 MathML(Word)")
+        self.copy_mathml_button.setObjectName("copyButton")
+        self.copy_mathml_button.setPopupMode(QToolButton.ToolButtonPopupMode.MenuButtonPopup)
+        self.copy_mathml_button.clicked.connect(lambda: self.copy_text_format("MathML"))
+        text_menu = QMenu(self.copy_mathml_button)
         for title, callback in [
-            ("复制 MathML", lambda: self.copy_text_format("MathML")),
             ("复制 AsciiMath", lambda: self.copy_text_format("AsciiMath")),
             ("复制 Typst", lambda: self.copy_text_format("Typst")),
-            ("复制公式 PNG", self.copy_png), ("复制 SVG 源码", self.copy_svg),
-            ("保存 PNG…", lambda: self.save_formula("PNG")),
-            ("保存 SVG…", lambda: self.save_formula("SVG")),
             ("保存可编辑 DOCX…", self.save_docx),
         ]:
-            export_menu.addAction(title, callback)
-        export_button.setMenu(export_menu)
-        copy_row.addWidget(export_button)
+            text_menu.addAction(title, callback)
+        self.copy_mathml_button.setMenu(text_menu)
+        copy_row.addWidget(self.copy_mathml_button)
+        self.copy_png_button = QToolButton()
+        self.copy_png_button.setText("复制 PNG")
+        self.copy_png_button.setObjectName("copyButton")
+        self.copy_png_button.setPopupMode(QToolButton.ToolButtonPopupMode.MenuButtonPopup)
+        self.copy_png_button.clicked.connect(self.copy_png)
+        image_menu = QMenu(self.copy_png_button)
+        for title, callback in [
+            ("保存 PNG…", lambda: self.save_formula("PNG")),
+            ("复制 SVG 源码", self.copy_svg),
+            ("保存 SVG…", lambda: self.save_formula("SVG")),
+        ]:
+            image_menu.addAction(title, callback)
+        self.copy_png_button.setMenu(image_menu)
+        copy_row.addWidget(self.copy_png_button)
         copy_row.addStretch()
         result_layout.addLayout(copy_row)
         self.result_info = QLabel("识别结果与编辑内容分别保存在本机历史中")
@@ -311,6 +350,8 @@ class MainWindow(QMainWindow):
             QToolButton,QPushButton { border:1px solid #dce0ed; background:white;
                 border-radius:6px; padding:7px 12px; color:#26324a; }
             QToolButton:hover,QPushButton:hover { background:#efedff; border-color:#a99ff5; }
+            QToolButton#copyButton { color:#2580ea; border-color:#6aa7f4; border-radius:13px; }
+            QToolButton#copyButton::menu-button { border-left:1px solid #d5e7fc; width:17px; }
             QPushButton#primary { background:#6d5dfc; color:white; border-color:#6d5dfc; }
             QPushButton#primary:hover { background:#5b4ae8; }
             QPushButton:disabled { background:#ebeef4; color:#99a0b1; border-color:#e2e6ef; }
@@ -394,6 +435,7 @@ class MainWindow(QMainWindow):
         try:
             for event in self.engine.poll():
                 self.handle_event(event)
+            self._advance_auto_recognition()
         except (ValueError, RuntimeError, OSError, EOFError, sqlite3.Error) as exc:
             self.handle_event({"type": "error", "message": str(exc)})
 
@@ -436,6 +478,7 @@ class MainWindow(QMainWindow):
             except (ValueError, OSError, sqlite3.Error) as exc:
                 self._notify(f"保存识别结果失败：{exc}")
         elif kind in ("error", "cancelled"):
+            self._auto_recognition_pending = False
             if task_id is None:
                 self._model_ready = False
                 self._loading_model = False
@@ -472,6 +515,8 @@ class MainWindow(QMainWindow):
             self.handle_event({"type": "error", "task_id": self._active_task, "message": str(exc)})
 
     def cancel_recognition(self):
+        pending = self._auto_recognition_pending
+        self._auto_recognition_pending = False
         if self._active_task is not None:
             # Invalidate first: a result already in the IPC queue must never be saved.
             self._active_task = None
@@ -479,6 +524,32 @@ class MainWindow(QMainWindow):
             self.engine.cancel()
             self._busy(False)
             self._notify("已取消识别")
+        elif pending:
+            self._busy(False)
+            self._notify("已取消自动识别")
+
+    def _advance_auto_recognition(self):
+        if not self._auto_recognition_pending or self._active_task is not None:
+            return
+        if self._loading_model or self._downloading_model:
+            return
+        if not self._model_ready:
+            self._auto_recognition_pending = False
+            self.load_model()
+            if self._loading_model:
+                self._auto_recognition_pending = True
+                self.cancel_button.setEnabled(True)
+            else:
+                self._busy(False)
+            return
+        if self.engine.is_busy:
+            self._notify("上一任务取消中，将自动识别最新粘贴的图片")
+            return
+        self._auto_recognition_pending = False
+        self.start_recognition()
+        if self._active_task is not None:
+            # Edits made while loading/cancelling are part of this request too.
+            self._task_editor_revision = self._auto_editor_revision
 
     def load_image_bytes(self, data):
         from img2tex.images import prepare_image
@@ -519,9 +590,10 @@ class MainWindow(QMainWindow):
 
     def _load_file(self, path):
         try:
-            self.load_image_bytes(Path(path).read_bytes())
+            return self.load_image_bytes(Path(path).read_bytes())
         except OSError as exc:
             self._notify(f"无法读取文件：{exc}")
+            return False
 
     def paste_image(self):
         self.showNormal()
@@ -529,12 +601,20 @@ class MainWindow(QMainWindow):
         self.activateWindow()
         clipboard = QApplication.clipboard()
         image = clipboard.image()
+        pasted = False
         if not image.isNull():
-            self.load_image_bytes(pixmap_png(QPixmap.fromImage(image)))
+            pasted = self.load_image_bytes(pixmap_png(QPixmap.fromImage(image)))
         elif clipboard.mimeData().hasUrls() and clipboard.mimeData().urls()[0].isLocalFile():
-            self._load_file(clipboard.mimeData().urls()[0].toLocalFile())
+            pasted = self._load_file(clipboard.mimeData().urls()[0].toLocalFile())
         else:
             self._notify("剪贴板中没有图片，请先复制图片或截图")
+        if pasted:
+            self._save_model_path()
+            self._auto_recognition_pending = True
+            self._auto_editor_revision = self._editor_revision
+            self.result_info.setText("图片已粘贴 · 自动识别")
+            self._busy(True)
+            self._advance_auto_recognition()
 
     def dragEnterEvent(self, event):
         mime = event.mimeData()
@@ -624,10 +704,23 @@ class MainWindow(QMainWindow):
     def copy_latex(self):
         source = self._source()
         if source:
-            wrappers = [("", ""), ("$", "$"), ("$$", "$$"), (r"\(", r"\)"), (r"\[", r"\]")]
-            left, right = wrappers[self.wrapper_combo.currentIndex()]
+            selected = self.latex_copy_group.checkedAction().data()
+            _, _, left, right = next(item for item in LATEX_COPY_FORMATS if item[0] == selected)
             QApplication.clipboard().setText(left + source + right)
             self._notify("LaTeX 已复制")
+
+    def _select_latex_wrapper(self, format_id):
+        previous = self.store.get_setting("latex_wrapper", "plain")
+        try:
+            self.store.set_setting("latex_wrapper", format_id)
+        except sqlite3.Error as exc:
+            self._latex_wrapper_actions.get(previous, self._latex_wrapper_actions["plain"]).setChecked(True)
+            self._notify(f"复制格式保存失败：{exc}")
+            return
+        action = self._latex_wrapper_actions[format_id]
+        action.setChecked(True)
+        self.copy_latex_button.setToolTip("默认复制格式：" + action.text())
+        self._notify("默认 LaTeX 复制格式：" + action.text())
 
     def copy_text_format(self, format_name):
         from img2tex import exports
@@ -756,9 +849,13 @@ class MainWindow(QMainWindow):
         if code == 0 and status == QProcess.ExitStatus.NormalExit:
             self._notify("模型下载完成，点击「加载模型」即可开始识别")
         else:
+            self._auto_recognition_pending = False
+            self._busy(False)
             self._notify("模型下载失败，请查看下方日志；可修正网络后重试")
 
     def _download_error(self, error):
+        self._auto_recognition_pending = False
+        self._busy(False)
         self._downloading_model = False
         self._model_controls_enabled(True)
         self.download_button.setEnabled(True)

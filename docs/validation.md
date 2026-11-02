@@ -30,11 +30,15 @@
 
 ## 自动化回归
 
-最新源码：**138 tests passed，另有 9 subtests passed**；Ruff、compileall、pip check 通过。
+最新源码：**159 tests passed，另有 9 subtests passed**；Ruff、compileall 通过。基础依赖的 pip check 已通过，本次没有修改依赖。
 
 覆盖图片校验/白底/尺寸、保守定界符清理、原始输出不随编辑改变、历史恢复、任务取消和迟到结果过滤、CPU/CUDA 选择、模型目录失效、下载续传和哈希拒绝、离线预览、错误 LaTeX、公式 PNG 边界、独立 SVG，以及常见导出结构。
 
 最终输入方式另有针对性回归：窗口内 Ctrl+V 图片粘贴、编辑器图片粘贴、纯文本正常粘贴、Ctrl+C 正常复制、其他窗口不被拦截、旧快捷键配置不被读取。已删除不再适用的内置截图/全局快捷键实现及其测试。
+
+追加修改验证了三个分体复制按钮、LaTeX 六种默认格式（含 equation）的勾选/保存/恢复、直接 MathML 复制，以及粘贴后的自动加载/识别。连续粘贴等待旧任务物理取消后只提交最新图片；取消、历史恢复、无效图片、模型路径为空和模型/下载失败均有回归。源码或模型原始输出不随复制格式变化。模型加载或旧任务取消的等待期间手动编辑的源码同样保留，不会被识别结果覆盖。
+
+真实 CPU GUI 集成（使用当前 MainWindow、ModelProcess、SQLite 和本地渲染器）完成：首次粘贴自动加载模型并识别 `E=mc²`，保留加载期间手动改为 `E=mc^{2}` 的编辑值 → 分体按钮复制 equation / MathML → 推理期间连续粘贴分式和矩阵 → 仅最新矩阵写入第二条历史。记录为 `artifacts/validation/copy-auto-integration.json`，UI/菜单截图为同目录 `copy-auto-ui.png`、`copy-formats-menu.png`。本次使用自己的测试窗口与离屏 Qt 测试，没有控制用户其他应用。
 
 导出复核修复了两处语义缺陷：嵌套 token 操作符不再静默丢失内容；Typst 上下标使用 `attach`，不额外添加可见括号。不支持的结构明确拒绝。
 
@@ -61,9 +65,11 @@
 - 固定版本模型准备命令退出 0，正确复用并校验现有完整权重。网络分段中断/损坏校验另由本地 HTTP 回归测试覆盖。
 - 发行包的 PYZ/模块/数据独立完成 MathML、AsciiMath、Typst 和可编辑 DOCX 检查；最终自动构建的符号表文件哈希匹配，DOCX 模板存在。
 - 本地预览资源与源码文件哈希匹配。最终 PYZ 含 Ctrl+V，且不含已删除的截图/全局热键模块。
-- 重新校验最终发行目录中的全部模型权重 SHA-256，与固定官方哈希一致。最后一次构建仅补充资源，EXE 哈希与已经通过 CPU/CUDA、下载和 Windows 启动验证的 EXE 相同。
+- 重新校验发行目录中的全部模型权重 SHA-256，与固定官方哈希一致。模型准备/下载逻辑及本地资源沿用已验证实现。
 
 本机日志为 `build/release-{cpu,cuda,download,windows}.*`；原始结果、中文路径样例、DOCX 与 `release-integrity.json` 位于 `artifacts/validation`。发行包未制作安装器或签名。
+
+复制菜单/粘贴自动识别更新已重新打包：`build/copy-auto-package-final.log` 构建退出 0。新版 EXE 在项目目录之外的离线 CPU/CUDA 实测均退出 0，结果一致；Windows GUI 启动并持续运行，stderr 为空。最终归档确认包含三个分体按钮、默认格式菜单、自动识别队列及等待期间编辑保护，转换符号表仍完整。对应日志为 `build/copy-auto-release-{cpu,cuda,gui}.*`，原始模型结果为 `artifacts/validation/copy-auto-release-{cpu,cuda}.json`。
 
 ## 适用限制
 

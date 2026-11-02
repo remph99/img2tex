@@ -5,6 +5,7 @@
 ## 目标
 Windows 桌面程序，图片/拖拽/剪贴板 → 本地 Xiaomi-OCR-0 → LaTeX 编辑和预览 → 本地复制导出及历史。
 执行中用户修订：删除内置截图和全局截图/粘贴快捷键，截图及复制图片由用户自行完成；窗口内使用 Ctrl+V 粘贴图片，不注册全局快捷键。Ctrl+C 保留标准文本复制，编辑器内的文本粘贴也保持正常。
+追加修订：粘贴成功后自动识别并按需加载所选本地模型，连续粘贴只处理最新图片；取消和历史恢复清除待识别请求。复制区为 LaTeX / MathML(Word) / PNG 分体按钮，LaTeX 下拉选择并记住六种格式（含 equation），仅复制结果附加定界符。
 首版提供 LaTeX/MathML/PNG/SVG、本地 DOCX、AsciiMath/Typst；复杂不支持结构应明确报错，不能静默导出错误公式。
 PDF 整页、翻译、云账号和 AI 编辑不在本次范围。
 
@@ -30,7 +31,7 @@ PDF 整页、翻译、云账号和 AI 编辑不在本次范围。
 
 ## 公共接口（各模块约定）
 - src/img2tex/images.py: prepare_image(data: bytes) -> PreparedImage(original_png, model_png, width, height, sha256, model_sha256)。字段均 bytes/int/str；可用 .model_png 送模型。
-- src/img2tex/engine.py: ModelProcess().load(model_dir: str, device: str), recognize(image_png: bytes, task_id: str, max_new_tokens: int=1024), cancel(), poll()->list[dict], stop()；属性 is_alive。
+- src/img2tex/engine.py: ModelProcess().load(model_dir: str, device: str), recognize(image_png: bytes, task_id: str, max_new_tokens: int=1024), cancel(), poll()->list[dict], stop()；属性 is_alive 和 is_busy（物理任务是否仍在执行/取消中）。
 - 事件 dict: type=loading/ready/result/error/cancelled，带 device；result 含 task_id,raw_output,latex_normalized,elapsed_seconds,device,model_revision；error 带 message 和可选 task_id。CPU/CUDA 切换由 GUI stop/load 控制。
 - src/img2tex/storage.py: Store(path: Path).get_setting(key,default=None), set_setting(key,value), add_result(result:dict,image_png:bytes)->int, update_edited(id:int,latex:str), list_history(search:str="",limit:int=100)->list[dict], get_record(id)->dict|None, delete(id), close()。历史字段 id,created_at,latex_edited,latex_normalized,raw_output,device,elapsed_seconds,model_revision,image_png。
 - src/img2tex/exports.py: to_mathml(latex:str)->str, to_asciimath(latex:str)->str, to_typst(latex:str)->str, write_docx(latex:str,path:Path)->None。无法保真时抛 ValueError；GUI 报错并保留编辑值。

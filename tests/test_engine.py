@@ -14,6 +14,16 @@ def test_worker_reports_root_cause_hidden_by_lazy_model_import():
 
 
 class EngineTests(unittest.TestCase):
+    def test_busy_clears_even_when_cancelled_task_result_is_filtered(self):
+        import queue
+        service = ModelProcess()
+        service._events = queue.Queue()
+        service._physical_task = "cancelled"
+        self.assertTrue(service.is_busy)
+        service._events.put({"type": "result", "task_id": "cancelled", "raw_output": "late"})
+        self.assertEqual(service.poll(), [])
+        self.assertFalse(service.is_busy)
+
     def test_missing_model_exits_without_network_or_hanging(self):
         service = ModelProcess()
         try:
