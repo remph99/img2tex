@@ -26,9 +26,9 @@
 | 安装版 | `Img2Tex-1.0.0-Windows-x64-Setup.exe` | 约 3.45 GB | 运行安装向导，默认安装到当前用户目录，可创建快捷方式 |
 | 离线便携版 | `Img2Tex-1.0.0-Windows-x64-Portable.zip` | 约 3.66 GB | 完整解压后运行 `Img2Tex\Img2Tex.exe`，移动时保留整个文件夹 |
 
-GitHub Release 单个附件需小于 2 GiB，完整成品以 `.part01`、`.part02` 分卷上传。**分卷不是单独可运行的安装程序或 ZIP，必须先合并。**
+GitHub Release 单个附件需小于 2 GiB，安装版分为 **13 个 256 MiB 上限分卷**，便携版分为 **2 个分卷**。**分卷不是单独可运行的安装程序或 ZIP，必须先合并。**
 
-1. 下载所选版本的**全部两个分卷**，以及 `Join-Release.ps1`、`SHA256SUMS.txt`、`SHA256SUMS.parts.txt`，放在同一文件夹。
+1. 下载所选版本的**全部分卷**（安装版 `.part01`–`.part13`，便携版 `.part01`–`.part02`），以及 `Join-Release.ps1`、`SHA256SUMS.txt`、`SHA256SUMS.parts.txt`，放在同一文件夹。
 2. 在该文件夹的 PowerShell 中执行相应命令：
 
 ```powershell
@@ -43,7 +43,7 @@ GitHub Release 单个附件需小于 2 GiB，完整成品以 `.part01`、`.part0
 若本机策略不允许运行脚本，可在命令提示符中使用系统 `copy /b` 合并，然后核对完整文件哈希：
 
 ```bat
-copy /b Img2Tex-1.0.0-Windows-x64-Setup.exe.part01+Img2Tex-1.0.0-Windows-x64-Setup.exe.part02 Img2Tex-1.0.0-Windows-x64-Setup.exe
+copy /b Img2Tex-1.0.0-Windows-x64-Setup.exe.part01+Img2Tex-1.0.0-Windows-x64-Setup.exe.part02+Img2Tex-1.0.0-Windows-x64-Setup.exe.part03+Img2Tex-1.0.0-Windows-x64-Setup.exe.part04+Img2Tex-1.0.0-Windows-x64-Setup.exe.part05+Img2Tex-1.0.0-Windows-x64-Setup.exe.part06+Img2Tex-1.0.0-Windows-x64-Setup.exe.part07+Img2Tex-1.0.0-Windows-x64-Setup.exe.part08+Img2Tex-1.0.0-Windows-x64-Setup.exe.part09+Img2Tex-1.0.0-Windows-x64-Setup.exe.part10+Img2Tex-1.0.0-Windows-x64-Setup.exe.part11+Img2Tex-1.0.0-Windows-x64-Setup.exe.part12+Img2Tex-1.0.0-Windows-x64-Setup.exe.part13 Img2Tex-1.0.0-Windows-x64-Setup.exe
 copy /b Img2Tex-1.0.0-Windows-x64-Portable.zip.part01+Img2Tex-1.0.0-Windows-x64-Portable.zip.part02 Img2Tex-1.0.0-Windows-x64-Portable.zip
 ```
 

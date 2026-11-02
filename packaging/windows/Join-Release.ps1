@@ -18,7 +18,14 @@ function Read-Hashes([string]$path) {
 $wholeHashes = Read-Hashes (Join-Path $folder 'SHA256SUMS.txt')
 $partHashes = Read-Hashes (Join-Path $folder 'SHA256SUMS.parts.txt')
 if (-not $wholeHashes.ContainsKey($name)) { throw "Missing full-file checksum: $name" }
-$parts = @("$name.part01", "$name.part02")
+$pattern = '^' + [regex]::Escape($name) + '\.part(\d+)$'
+$parts = @($partHashes.Keys | Where-Object { $_ -match $pattern } |
+    Sort-Object { [int]([regex]::Match($_, $pattern).Groups[1].Value) })
+if ($parts.Count -eq 0) { throw "No parts listed for: $name" }
+for ($index = 0; $index -lt $parts.Count; $index++) {
+    $number = [int]([regex]::Match($parts[$index], $pattern).Groups[1].Value)
+    if ($number -ne $index + 1) { throw "Part numbering is incomplete for: $name" }
+}
 foreach ($part in $parts) {
     if (-not $partHashes.ContainsKey($part)) { throw "Missing part checksum: $part" }
     $actual = (Get-FileHash -LiteralPath (Join-Path $folder $part) -Algorithm SHA256).Hash
