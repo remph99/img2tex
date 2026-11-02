@@ -40,3 +40,11 @@
 - 安装器验收使用同版覆盖安装；没有假称跨版本数据库迁移或未来版本升级已通过。
 
 本机原始证据：`build/release-build.json`、`build/distribution-acceptance.json`、`build/distribution-acceptance.log`、`build/distribution-tests.log`、`build/installer-compile.log` 和 `build/acceptance` 下各次验收的输入输出与安装日志。上述开发证据不放入发行包。
+
+## GitHub 分发
+
+个人仓库为 `remph99/img2tex`，按用户选择设为私有。源码上传 Git，完整安装包与便携包作为 Release 附件提供，不把模型或二进制写入 Git 历史。
+
+GitHub Release 的单文件限制为小于 2 GiB，原成品各切为两个原始字节分卷，单卷上限 1900 MiB；完整成品保持以上原始 SHA-256 不变。`Join-Release.ps1` 校验各分卷、合并后校验成品，并拒绝覆盖已有文件；另提供分卷 SHA-256 清单。
+
+实际安装包和便携 ZIP 均用 Windows PowerShell 5.1 合并成功，结果哈希与原始成品一致。五项小样本检查覆盖正确合并、已有成品保留、损坏分卷拒绝、缺失分卷拒绝及最终哈希错误拒绝；README 的本地链接检查通过。发布会核对 GitHub 返回的每个附件大小和 SHA-256，全部完成后才将草稿 Release 发布。
