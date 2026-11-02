@@ -44,6 +44,6 @@ class ModelSetupTests(unittest.TestCase):
             model = root / "models" / "xiaomi-ocr-0"
             model.mkdir(parents=True)
             (model / "config.json").write_text("{}", encoding="utf8")
-            with patch("img2tex.model_setup.sys.executable", str(root / "Img2Tex.exe")), \
-                 patch("img2tex.model_setup.sys.frozen", True, create=True):
+            with patch("img2tex.paths.sys.executable", str(root / "Img2Tex.exe")), \
+                 patch("img2tex.paths.sys.frozen", True, create=True):
                 self.assertEqual(default_model_dir(), model)

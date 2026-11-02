@@ -1,0 +1,44 @@
+Img2Tex — Third-party software notices
+
+This distribution includes the following independently licensed components.
+The original license/copyright texts distributed by their packages are retained
+under _internal, including *.dist-info/licenses and img2tex/assets.
+
+Xiaomi-OCR-0, fixed model revision bbd8cf8d21f256b3644b44cb860f3a7cecb93c30:
+  Apache-2.0; model license and model card: models/xiaomi-ocr-0/LICENSE, README.md
+  Source/model: https://github.com/xiaomi-research/Xiaomi-OCR-0
+
+PySide6 / Qt 6.12.0:
+  Original license files: _internal/pyside6*-6.12.0.dist-info/licenses
+  Qt and bundled third-party components retain their respective license terms.
+  Copies of the GNU LGPL/GPL texts and Qt exception are in licenses/.
+  Sources: https://download.qt.io/official_releases/QtForPython/pyside6/
+           https://download.qt.io/archive/qt/6.12/
+  Qt is dynamically linked. Its DLLs remain separate under _internal/PySide6
+  and can be replaced with compatible modified builds. Retain the relevant
+  license notices when redistributing any modified runtime.
+
+PyTorch 2.14.0, torchvision 0.29.0, Transformers 5.17.0 and dependencies:
+  License files/package metadata retained under _internal.
+  Sources: https://github.com/pytorch/pytorch
+           https://github.com/pytorch/vision
+           https://github.com/huggingface/transformers
+  NVIDIA CUDA runtime component terms are retained with the PyTorch distribution.
+
+KaTeX 0.16.22 / MathJax 3.2.2:
+  Original notices: _internal/img2tex/assets/THIRD_PARTY_NOTICES.txt
+  License files: _internal/img2tex/assets/katex/LICENSE, mathjax/LICENSE
+  Sources: https://github.com/KaTeX/KaTeX
+           https://github.com/mathjax/MathJax
+
+latex2mathml 3.81.1 / mathml2omml 0.0.2 / python-docx 1.2.0:
+  Original license texts: export-notices.md and package metadata under _internal.
+  The bundled Unicode math symbol table retains its original notice header.
+
+Python and other runtime dependencies:
+  Original copyright and license notices remain in the bundled runtime and
+  corresponding package metadata. These components are not authored by Img2Tex.
+
+Installer generated using Inno Setup 7.1.1:
+  Copyright Jordan Russell and Martijn Laan. https://jrsoftware.org/
+  The original installer-engine notices and addresses are retained.

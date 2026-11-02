@@ -30,7 +30,7 @@
 
 ## 自动化回归
 
-最新源码：**159 tests passed，另有 9 subtests passed**；Ruff、compileall 通过。基础依赖的 pip check 已通过，本次没有修改依赖。
+复制/粘贴功能完成时：**159 tests passed，另有 9 subtests passed**；发行改造后的最新结果为 **170 tests passed，另有 9 subtests passed**，详见 [发行验收](distribution-validation.md)。Ruff、compileall、pip check 通过。
 
 覆盖图片校验/白底/尺寸、保守定界符清理、原始输出不随编辑改变、历史恢复、任务取消和迟到结果过滤、CPU/CUDA 选择、模型目录失效、下载续传和哈希拒绝、离线预览、错误 LaTeX、公式 PNG 边界、独立 SVG，以及常见导出结构。
 
@@ -67,7 +67,7 @@
 - 本地预览资源与源码文件哈希匹配。最终 PYZ 含 Ctrl+V，且不含已删除的截图/全局热键模块。
 - 重新校验发行目录中的全部模型权重 SHA-256，与固定官方哈希一致。模型准备/下载逻辑及本地资源沿用已验证实现。
 
-本机日志为 `build/release-{cpu,cuda,download,windows}.*`；原始结果、中文路径样例、DOCX 与 `release-integrity.json` 位于 `artifacts/validation`。发行包未制作安装器或签名。
+本机日志为 `build/release-{cpu,cuda,download,windows}.*`；原始结果、中文路径样例、DOCX 与 `release-integrity.json` 位于 `artifacts/validation`。以上为早期文件夹构建记录；1.0.0 安装版与便携版记录见 [发行验收](distribution-validation.md)，仍未签名。
 
 复制菜单/粘贴自动识别更新已重新打包：`build/copy-auto-package-final.log` 构建退出 0。新版 EXE 在项目目录之外的离线 CPU/CUDA 实测均退出 0，结果一致；Windows GUI 启动并持续运行，stderr 为空。最终归档确认包含三个分体按钮、默认格式菜单、自动识别队列及等待期间编辑保护，转换符号表仍完整。对应日志为 `build/copy-auto-release-{cpu,cuda,gui}.*`，原始模型结果为 `artifacts/validation/copy-auto-release-{cpu,cuda}.json`。
 
@@ -78,4 +78,4 @@
 - MathType 仅验收基础公式的 MathML 导入。复杂结构、旧版 MathType、剪贴板原生 MTEF/OLE 不作全面兼容承诺。
 - AsciiMath/Typst 不是全功能 LaTeX 转译，无法保真时拒绝导出；MathML/DOCX 也受所支持结构范围限制。
 - 未安装可选 fused CUDA kernel；当前模型使用可工作的 PyTorch 参考实现，日志可能提示这些可选加速库缺失。
-- 本次不含跨机器签名安装器、自动更新、PDF 整页解析、云端服务和批量识别。
+- 1.0.0 已提供安装器与便携版，尚无跨机器验收和代码签名；不含自动更新、PDF 整页解析、云端服务和批量识别。

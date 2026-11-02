@@ -15,7 +15,8 @@ binaries += [(str(path), 'torchvision') for path in vision_path.glob('*.pyd')]
 a = Analysis(
     [str(root / 'scripts' / 'desktop_entry.py')], pathex=[str(root / 'src')],
     binaries=binaries, datas=datas, hiddenimports=hidden,
-    excludes=['pytest', 'matplotlib', 'sklearn', 'pandas', 'scipy', 'IPython', 'tkinter'],
+    excludes=['pytest', 'matplotlib', 'sklearn', 'pandas', 'scipy', 'IPython', 'tkinter',
+              'PySide6.QtQml', 'PySide6.QtQuick', 'PySide6.QtQuickWidgets'],
     noarchive=False,
 )
 # Qt uses Windows' unsuffixed ICU API. Poppler on the build host's PATH can
@@ -27,5 +28,6 @@ a.datas += [(str(Path(destination) / Path(source).name), source, 'DATA')
             for source, destination in collect_data_files('latex2mathml')]
 pyz = PYZ(a.pure)
 exe = EXE(pyz, a.scripts, [], exclude_binaries=True, name='Img2Tex', debug=False, bootloader_ignore_signals=False,
-          strip=False, upx=False, console=False)
+          strip=False, upx=False, console=False, icon=str(root / 'src/img2tex/assets/app.ico'),
+          version=str(root / 'build/version_info.txt'))
 coll = COLLECT(exe, a.binaries, a.datas, strip=False, upx=False, name='Img2Tex')

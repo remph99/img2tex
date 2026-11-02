@@ -25,12 +25,20 @@ def main() -> int:
     from .model_setup import default_model_dir, download_model
 
     try:
+        if args.download_model or args.check_device or args.smoke:
+            from .paths import configure_runtime
+            configure_runtime()
         if args.download_model:
             print(download_model(args.model_dir), flush=True)
             return 0
         if args.check_device:
             import torch
+
+            from . import __version__
+            from .paths import app_data_dir, is_portable
             print(json.dumps({
+                "version": __version__, "portable": is_portable(), "data_dir": str(app_data_dir()),
+                "default_model_dir": str(default_model_dir()), "python_executable": sys.executable,
                 "torch": torch.__version__, "cpu": True, "cuda": torch.cuda.is_available(),
                 "cuda_runtime": torch.version.cuda,
                 "gpu": torch.cuda.get_device_name(0) if torch.cuda.is_available() else None,

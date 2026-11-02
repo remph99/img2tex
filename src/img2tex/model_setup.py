@@ -3,11 +3,12 @@
 import hashlib
 import json
 import os
-import sys
 import time
 import urllib.error
 import urllib.request
 from pathlib import Path
+
+from . import paths
 
 MODEL_ID = "xiaomi-research/Xiaomi-OCR-0"
 MODEL_REVISION = "bbd8cf8d21f256b3644b44cb860f3a7cecb93c30"
@@ -21,11 +22,10 @@ MODEL_FILES = [
 
 
 def default_model_dir() -> Path:
-    portable = (Path(sys.executable).parent if getattr(sys, "frozen", False)
-                else Path(__file__).resolve().parents[2]) / "models" / "xiaomi-ocr-0"
-    if (portable / "config.json").is_file():
-        return portable
-    return Path(os.environ.get("LOCALAPPDATA", Path.home() / ".local" / "share")) / "Img2Tex" / "models" / "xiaomi-ocr-0"
+    bundled = paths.application_dir() / "models" / "xiaomi-ocr-0"
+    if paths.is_portable() or (bundled / "config.json").is_file():
+        return bundled
+    return paths.app_data_dir() / "models" / "xiaomi-ocr-0"
 
 
 def device_options(device: str, *, cuda_available: bool) -> tuple[str, str]:

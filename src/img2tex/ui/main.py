@@ -1,5 +1,4 @@
 """Chinese native desktop UI. SQLite owns settings and model output history."""
-import os
 import sqlite3
 import sys
 from datetime import datetime
@@ -22,6 +21,7 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
     QMainWindow,
     QMenu,
+    QMessageBox,
     QPlainTextEdit,
     QProgressBar,
     QPushButton,
@@ -37,6 +37,7 @@ from PySide6.QtWidgets import (
 )
 
 from img2tex.model_setup import default_model_dir
+from img2tex.paths import app_data_dir, configure_runtime, resolve_model_path, serialize_model_path
 
 from .preview import FormulaPreview, pixmap_png
 
@@ -48,10 +49,6 @@ LATEX_COPY_FORMATS = (
     ("display_brackets", r"\[ … \] 格式", r"\[", r"\]"),
     ("equation", r"\begin{equation} … \end{equation} 格式", "\\begin{equation}\n", "\n\\end{equation}"),
 )
-
-
-def app_data_dir():
-    return Path(os.environ.get("LOCALAPPDATA", str(Path.home() / ".local" / "share"))) / "Img2Tex"
 
 
 def app_icon():
@@ -284,8 +281,9 @@ class MainWindow(QMainWindow):
         self.device_combo.setCurrentIndex(1 if self.store.get_setting("device", "cpu") == "cuda" else 0)
         form.addRow("计算设备", self.device_combo)
         path_row = QHBoxLayout()
-        self.model_path = QLineEdit(str(self.store.get_setting(
-            "model_dir", str(default_model_dir()))))
+        saved_model = self.store.get_setting("model_dir")
+        self.model_path = QLineEdit(resolve_model_path(saved_model) if saved_model is not None
+                                    else str(default_model_dir()))
         self.model_path.setPlaceholderText("选择已下载的 Xiaomi-OCR-0 模型目录")
         self.model_path.editingFinished.connect(self._save_model_path)
         path_row.addWidget(self.model_path, 1)
@@ -387,8 +385,9 @@ class MainWindow(QMainWindow):
         return super().eventFilter(watched, event)
 
     def _save_model_path(self):
-        path = self.model_path.text().strip()
-        self.store.set_setting("model_dir", path)
+        path = resolve_model_path(self.model_path.text().strip())
+        self.model_path.setText(path)
+        self.store.set_setting("model_dir", serialize_model_path(path))
         if (self._model_ready or self._loading_model) and path != self._loaded_model_dir:
             self.cancel_recognition()
             self.engine.stop()
@@ -397,6 +396,7 @@ class MainWindow(QMainWindow):
             self.progress.hide()
             self.load_button.setEnabled(True)
             self._notify("模型目录已更改，请重新加载模型")
+        return path
 
     def _choose_model_dir(self):
         path = QFileDialog.getExistingDirectory(self, "选择本地模型目录", self.model_path.text())
@@ -420,7 +420,7 @@ class MainWindow(QMainWindow):
         self.engine.stop()
         self._model_ready = False
         self._loading_model = False
-        self._save_model_path()
+        path = self._save_model_path()
         self._loaded_model_dir = path
         self._loading_model = True
         self.load_button.setEnabled(False)
@@ -812,7 +812,7 @@ class MainWindow(QMainWindow):
         if not path:
             self._notify("请先选择下载目录")
             return
-        self._save_model_path()
+        path = self._save_model_path()
         # Transformers may mmap weight files on Windows. Release the process and
         # logically invalidate results before the downloader replaces those files.
         self.cancel_recognition()
@@ -906,6 +906,11 @@ def run() -> int:
     app.setApplicationName("Img2Tex")
     app.setOrganizationName("Img2Tex")
     app.setFont(QFont("Microsoft YaHei UI", 10))
-    window = MainWindow()
+    try:
+        configure_runtime()
+        window = MainWindow()
+    except (OSError, sqlite3.Error) as exc:
+        QMessageBox.critical(None, "Img2Tex 无法启动", f"无法打开应用数据，请检查目录权限或历史数据库：\n{exc}")
+        return 1
     window.show()
     return app.exec()

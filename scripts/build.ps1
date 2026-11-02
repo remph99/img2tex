@@ -9,6 +9,8 @@ Push-Location $projectRoot
 try {
     # Keep unrelated tools (e.g. Poppler's ICU DLLs) out of dependency resolution.
     $env:PATH = @($envRoot, "$envRoot\Library\bin", "$envRoot\Scripts", "$env:SystemRoot\System32", $env:SystemRoot) -join ';'
+    & $pythonExe -s scripts\prepare_release.py
+    if ($LASTEXITCODE -ne 0) { throw 'Release metadata generation failed.' }
     & $pythonExe -s -m PyInstaller --noconfirm img2tex.spec
     if ($LASTEXITCODE -ne 0) { throw 'Application packaging failed.' }
     Copy-Item -LiteralPath (Join-Path $projectRoot 'README.md') -Destination (Join-Path $projectRoot 'dist\Img2Tex\README.md')

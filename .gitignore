@@ -2,6 +2,7 @@ analysis/
 models/
 build/
 dist/
+release/
 artifacts/
 *.log
 *.egg-info/

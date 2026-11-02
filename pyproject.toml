@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "img2tex-local"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Local Windows formula OCR powered by Xiaomi-OCR-0"
 requires-python = ">=3.12,<3.14"
 dependencies = [
@@ -21,6 +21,9 @@ img2tex = "img2tex.__main__:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.dynamic]
+version = {attr = "img2tex.__version__"}
 
 [tool.setuptools.package-data]
 img2tex = ["assets/**/*", "assets/*"]

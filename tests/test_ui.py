@@ -1,6 +1,7 @@
 """Regression checks for user data preservation across asynchronous UI work."""
 import os
 from io import BytesIO
+from pathlib import Path
 
 # Windows' offscreen plugin has no D3D surface. Use Chromium's software path for
 # genuine pixel assertions, while leaving the installed desktop app unchanged.
@@ -94,7 +95,7 @@ def test_device_change_persists_and_stops_old_worker(window):
     widget.device_combo.setCurrentIndex(1)
     assert store.get_setting("device") == "cuda"
     assert engine.stops == 1
-    assert engine.loads == [("C:/模型", "cuda")]
+    assert engine.loads == [(str(Path("C:/模型")), "cuda")]
 
 
 def test_cancelled_result_cannot_write_history_or_editor(window):
@@ -601,3 +602,54 @@ def test_edits_while_auto_paste_waits_are_not_overwritten(window, waiting_for):
     widget.handle_event(result(engine.task_id))
     assert widget.editor.toPlainText() == "my correction"
     assert store.list_history()[0]["latex_edited"] == "my correction"
+
+
+def test_portable_history_settings_and_model_survive_folder_move(qtbot, tmp_path, monkeypatch):
+    from img2tex import paths
+    from img2tex.storage import Store
+    from img2tex.ui.main import MainWindow
+
+    root = tmp_path / "original portable"
+    root.mkdir()
+    (root / "portable.flag").touch()
+    model = root / "models" / "xiaomi-ocr-0"
+    model.mkdir(parents=True)
+    (model / "config.json").write_text("{}", encoding="utf8")
+    monkeypatch.setattr(paths, "application_dir", lambda: root)
+    store = Store(paths.app_data_dir() / "history.sqlite3")
+    record_id = store.add_result(result("saved"), image_bytes())
+    store.set_setting("latex_wrapper", "equation")
+    widget = MainWindow(store=store, engine=EngineDouble(), preview=PreviewDouble(),
+                        enable_system_integration=False)
+    qtbot.addWidget(widget)
+    widget._save_model_path()
+    assert store.get_setting("model_dir") == "models/xiaomi-ocr-0"
+    widget.close()
+    store.close()
+    moved = tmp_path / "移动 版本"
+    root.rename(moved)
+    monkeypatch.setattr(paths, "application_dir", lambda: moved)
+    reopened = Store(paths.app_data_dir() / "history.sqlite3")
+    restored = MainWindow(store=reopened, engine=EngineDouble(), preview=PreviewDouble(),
+                          enable_system_integration=False)
+    qtbot.addWidget(restored)
+    try:
+        assert restored.model_path.text() == str(moved / "models" / "xiaomi-ocr-0")
+        restored.restore_record(record_id)
+        assert restored.editor.toPlainText() == "x^2"
+        assert restored.latex_copy_group.checkedAction().data() == "equation"
+    finally:
+        restored.close()
+        reopened.close()
+
+
+def test_relative_model_entry_is_resolved_before_loading(window, tmp_path, monkeypatch):
+    from img2tex import paths
+    widget, store, engine, _ = window
+    monkeypatch.setattr(paths, "application_dir", lambda: tmp_path)
+    widget.model_path.setText("models/xiaomi-ocr-0")
+    widget.load_model()
+    expected = str(tmp_path / "models/xiaomi-ocr-0")
+    assert engine.loads[-1][0] == expected
+    assert widget.model_path.text() == expected
+    assert store.get_setting("model_dir") == "models/xiaomi-ocr-0"

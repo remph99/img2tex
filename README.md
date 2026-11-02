@@ -4,13 +4,24 @@ Windows 桌面应用：图片文件、拖拽或剪贴板 → 本地 Xiaomi-OCR-0
 
 ## 直接运行
 
+正式发行文件位于 `release\1.0.0`，两种版本均包含模型和 CPU/CUDA 运行库，无需安装 Python、conda 或另行下载权重：
+
+| 版本 | 文件 | 使用方式 |
+| --- | --- | --- |
+| 安装版 | `Img2Tex-1.0.0-Windows-x64-Setup.exe`（约 3.45 GB） | 运行安装向导，默认安装到当前用户目录，可创建快捷方式 |
+| 离线便携版 | `Img2Tex-1.0.0-Windows-x64-Portable.zip`（约 3.66 GB） | 完整解压后双击 `Img2Tex.exe`，移动时保留整个文件夹 |
+
+安装版的历史、配置、日志和应用缓存保存在 `%LOCALAPPDATA%\Img2Tex`，卸载保留这些数据。便携版由同级 `portable.flag` 标识，使用同级 `data` 目录；须放在可写磁盘，退出后再移动或备份。随包模型使用相对路径，移动整个便携目录后继续可用；手动选择的外部模型仍依赖原绝对路径。
+
+发行文件未签名。可用 `Get-FileHash -Algorithm SHA256 <文件路径>` 与同目录 `SHA256SUMS.txt` 比对完整性。当前在 Windows 11 x64 本机验收，尚未在另一台干净 Windows 机器验证；详细记录见 [发行验收](docs/distribution-validation.md)。
+
 本机开发环境已经创建：`conda activate img2tex`。在本项目目录执行：
 
 ```powershell
 python -s -m img2tex
 ```
 
-Windows 文件夹发行版位于 `dist\Img2Tex`，双击其中的 `Img2Tex.exe`。完整目录约 5.1 GiB，包含模型及 CUDA 运行库。移动时保留整个文件夹，包括 `_internal` 和 `models`；模型不嵌入 EXE。
+构建中间运行目录位于 `dist\Img2Tex`，约 5.0 GiB，包含模型及 CUDA 运行库。正式分发请使用上面的安装包或便携压缩包；模型不嵌入 EXE。
 
 1. 在「模型与设置」选择 **CPU** 或 **CUDA** 和模型目录。初始为 CPU，之后记住你的选择；也可以提前点击「加载模型」。
 2. 自行用截图工具截图或复制图片，在应用窗口内按 `Ctrl+V` 或点击「粘贴图片」，即可自动识别；模型尚未加载时会自动加载所选本地模型。连续粘贴只识别最新图片。文件导入/拖拽仍可点击「开始识别」，该按钮也可手动重试。
@@ -23,7 +34,7 @@ Windows 文件夹发行版位于 `dist\Img2Tex`，双击其中的 `Img2Tex.exe`�
 
 两种设备共用同一份权重。CPU 使用 float32；CUDA 使用 float16，需要兼容的 NVIDIA 驱动。切换设备会结束旧模型进程，再加载新模型。CUDA 不可用会显示错误，请选择 CPU；不会悄悄换设备。CUDA 版 PyTorch 也能执行 CPU 推理。
 
-本机已安装 CUDA 版 PyTorch，并实际验证 CPU 与 RTX 4070 Ti SUPER 推理。只使用 CPU 的机器可以安装体积较小的 CPU 版依赖，应用无需 CUDA 即可运行。当前发行文件夹包含本机 CUDA 版运行库，因此体积较大。
+本机已安装 CUDA 版 PyTorch，并实际验证 CPU 与 RTX 4070 Ti SUPER 推理。两份发行包均可选择 CPU，无需另装 CUDA Toolkit；CUDA 模式需要兼容 NVIDIA 驱动。从源码部署时也可以安装体积较小的 CPU 版依赖。当前统一发行包包含 CUDA 运行库，因此体积较大。
 
 ## 从源码搭建 conda 环境
 
@@ -52,9 +63,9 @@ python -s -m img2tex --download-model --model-dir .\models\xiaomi-ocr-0
 
 也可以点击界面「下载固定版本模型」。下载分段续传，校验 SHA-256 后发布权重；失败可在同一目录重试。不要将 `.part` 文件改名充当完整模型。
 
-默认优先使用项目/EXE 同级 `models\xiaomi-ocr-0`，否则为 `%LOCALAPPDATA%\Img2Tex\models\xiaomi-ocr-0`；界面可选择现有完整目录。设置中保存的目录优先。移动目录后可重新浏览选择。模型目录没有下载器的匹配清单时，历史版本记录为 `local-unverified`。
+默认优先使用项目/EXE 同级 `models\xiaomi-ocr-0`，否则为 `%LOCALAPPDATA%\Img2Tex\models\xiaomi-ocr-0`；便携版始终优先同级模型路径。界面可选择现有完整目录，设置中保存的目录优先。同级模型设置以相对路径保存，外部模型保存绝对路径。模型目录没有下载器的匹配清单时，历史版本记录为 `local-unverified`。
 
-日常识别仅加载本地权重，不调用识别 API；KaTeX、MathJax、字体及所有导出均在本地。模型下载是单独操作，不上传输入图片。历史和设置位于 `%LOCALAPPDATA%\Img2Tex\history.sqlite3`，包含白底合成后的原尺寸 PNG、原始/规范化/编辑后源码、设备、耗时、推理参数和图像哈希。最多显示最近 100 条匹配历史。备份数据库时先退出程序。
+日常识别仅加载本地权重，不调用识别 API；KaTeX、MathJax、字体及所有导出均在本地。模型下载是单独操作，不上传输入图片。历史和设置位于数据目录的 `history.sqlite3`，包含白底合成后的原尺寸 PNG、原始/规范化/编辑后源码、设备、耗时、推理参数和图像哈希。最多显示最近 100 条匹配历史。备份数据库时先退出程序。
 
 ## 兼容范围
 
@@ -86,4 +97,14 @@ python -s -m img2tex --smoke .\tests\fixtures\energy.png --device cuda --max-tok
 .\scripts\build.ps1
 ```
 
-打包脚本生成文件夹发行版；如项目存在完整模型目录，会同时复制到发行目录。不得只分发 EXE。详细实测、边界和未覆盖项见 `docs/validation.md`；工作流及模块见 `docs/workflow.md`。第三方许可证保留在本地 assets、发行目录 `_internal` 的包元数据和 notices 中，转换依赖另见 `docs/export-notices.md`。
+打包脚本生成中间运行目录；如项目存在完整模型目录，会同时复制到发行目录。然后在同一 conda 环境执行：
+
+```powershell
+python -s scripts/release.py
+# 编译器不在默认位置时：
+python -s scripts/release.py --compiler 'C:\Tools\Inno Setup 7\ISCC.exe' --output .\release\new-build
+```
+
+需要 Inno Setup 7 编译器，本机已验证的 7.1.1 位于 `build\tools\InnoSetup\ISCC.exe`。发布脚本校验模型 SHA-256，从明确清单复制干净运行时，生成安装包、ZIP64 便携包和校验文件。输出目录必须尚不存在，脚本不会覆盖旧发行文件；不要把使用过的 `data` 加入发行包。版本唯一来源为 `src/img2tex/__init__.py`，图标与 Windows 版本资源由 `scripts/prepare_release.py` 生成。
+
+详细实测、边界和未覆盖项见 `docs/validation.md`、`docs/distribution-validation.md`；工作流及模块见 `docs/workflow.md`。第三方许可证保留在本地 assets、发行目录 `_internal` 的包元数据和 notices 中，转换依赖另见 `docs/export-notices.md`。
