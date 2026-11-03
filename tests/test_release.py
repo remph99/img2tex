@@ -44,6 +44,19 @@ def test_installer_stage_never_enables_portable_mode(tmp_path):
     assert not (target / "data").exists()
 
 
+def test_cpuonly_identity_survives_staging_and_is_recorded_in_manifest(tmp_path):
+    import json
+    runtime = sample_runtime(tmp_path)
+    metadata = {"edition": "cpuonly", "torch": "2.14.0+cpu", "cuda_runtime": None}
+    (runtime / "img2tex-runtime.json").write_text(json.dumps(metadata), encoding="utf8")
+    target = tmp_path / "cpuonly" / "Img2Tex"
+    stage_runtime(runtime, target, portable=True)
+    assert json.loads((target / "img2tex-runtime.json").read_text()) == metadata
+    manifest = json.loads((target / "build-manifest.json").read_text(encoding="utf8"))
+    assert manifest["runtime"] == metadata
+    assert "models/xiaomi-ocr-0/model.safetensors" in manifest["files"]
+
+
 def test_portable_zip_has_one_top_folder_and_valid_crc(tmp_path):
     runtime = sample_runtime(tmp_path)
     target = tmp_path / "portable" / "Img2Tex"

@@ -1,5 +1,6 @@
 """Spawned, device-explicit model worker. Importing the desktop never loads torch."""
 
+import gc
 import io
 import multiprocessing as mp
 import os
@@ -7,6 +8,7 @@ import queue
 import time
 from collections import deque
 
+from .edition import cpu_only
 from .model_setup import FORMULA_PROMPT, check_model_directory, device_options, model_revision
 from .results import normalize_latex
 
@@ -21,7 +23,45 @@ def describe_error(exc: Exception) -> str:
     return " · ".join(parts)
 
 
+def select_device(requested, torch, *, only_cpu=False):
+    info = {"device": "cpu", "cuda_available": None, "reason": "", "gpu": None}
+    if only_cpu:
+        return {**info, "cuda_available": False, "reason": "此发行版仅支持 CPU"}
+    if requested == "cpu":
+        return info
+    try:
+        if not torch.version.cuda or not torch.cuda.is_available():
+            raise RuntimeError("CUDA 不可用，请检查 NVIDIA 显卡及驱动；当前完整包需要兼容 CUDA 13 的驱动")
+        capability = torch.cuda.get_device_capability()
+        if int(torch.version.cuda.split(".")[0]) >= 13 and capability < (7, 5):
+            raise RuntimeError("随包 CUDA 13 需要计算能力 7.5 或更新的 NVIDIA GPU")
+        # An actual kernel detects unsupported binaries/driver errors missed by is_available.
+        tensor = torch.ones((2, 2), device="cuda")
+        torch.mm(tensor, tensor)
+        torch.cuda.synchronize()
+        free, total = torch.cuda.mem_get_info()
+        return {**info, "device": "cuda", "cuda_available": True,
+                "gpu": torch.cuda.get_device_name(0), "free_vram_bytes": free, "total_vram_bytes": total}
+    except Exception as exc:  # noqa: BLE001 - driver errors are a recoverable CPU fallback
+        return {**info, "cuda_available": False, "reason": describe_error(exc)}
+
+
+def _generate(torch, processor, model, image, device, budget, stopping_criteria=None):
+    messages = [{"role": "user", "content": [
+        {"type": "image", "image": image}, {"type": "text", "text": FORMULA_PROMPT},
+    ]}]
+    inputs = processor.apply_chat_template(
+        messages, tokenize=True, add_generation_prompt=True, return_dict=True,
+        return_tensors="pt", enable_thinking=False,
+    ).to(device)
+    with torch.inference_mode():
+        output = model.generate(**inputs, max_new_tokens=budget, do_sample=False,
+                                stopping_criteria=stopping_criteria)
+    return output[:, inputs["input_ids"].shape[1]:]
+
+
 def _worker_main(commands, events, cancel_event, model_dir: str, device: str):
+    started = time.perf_counter()
     try:
         path = check_model_directory(model_dir)
         revision = model_revision(path)
@@ -29,7 +69,7 @@ def _worker_main(commands, events, cancel_event, model_dir: str, device: str):
         os.environ["HF_HUB_OFFLINE"] = "1"
         os.environ["HF_HUB_DISABLE_TELEMETRY"] = "1"
         import torch
-        from PIL import Image
+        from PIL import Image, ImageDraw
         from transformers import (
             AutoModelForImageTextToText,
             AutoProcessor,
@@ -39,20 +79,56 @@ def _worker_main(commands, events, cancel_event, model_dir: str, device: str):
 
         from .images import prepare_image
 
-        selected, dtype_name = device_options(device, cuda_available=torch.cuda.is_available())
-        if selected == "cpu":
-            torch.set_num_threads(min(8, os.cpu_count() or 1))
-        dtype = getattr(torch, dtype_name)
+        info = select_device(device, torch, only_cpu=cpu_only() or torch.version.cuda is None)
+        selected = info["device"]
+        events.put({"type": "device_info", **info})
         processor = AutoProcessor.from_pretrained(path, local_files_only=True, trust_remote_code=False)
-        model = AutoModelForImageTextToText.from_pretrained(
-            path, dtype=dtype, local_files_only=True, trust_remote_code=False, attn_implementation="eager",
-        ).to(selected).eval()
+
+        def load_and_warmup(target):
+            if target == "cpu":
+                torch.set_num_threads(min(8, os.cpu_count() or 1))
+            _, dtype_name = device_options(target, cuda_available=target == "cuda")
+            events.put({"type": "loading", "device": target})
+            load_start = time.perf_counter()
+            loaded = AutoModelForImageTextToText.from_pretrained(
+                path, dtype=getattr(torch, dtype_name), local_files_only=True,
+                trust_remote_code=False, attn_implementation="eager",
+            ).to(target).eval()
+            load_seconds = time.perf_counter() - load_start
+            events.put({"type": "warming", "device": target})
+            warm_start = time.perf_counter()
+            image = Image.new("RGB", (224, 96), "white")
+            ImageDraw.Draw(image).text((24, 30), "x^2 + 1", fill="black", font_size=26)
+            _generate(torch, processor, loaded, image, target, 8)
+            if target == "cuda":
+                torch.cuda.synchronize()
+            return loaded, dtype_name, load_seconds, time.perf_counter() - warm_start
+
+        model = None
+        failure = None
+        try:
+            model, dtype_name, load_seconds, warm_seconds = load_and_warmup(selected)
+        except Exception as exc:
+            if selected != "cuda":
+                raise
+            failure = describe_error(exc)
+        if failure:
+            gc.collect()
+            try:
+                torch.cuda.empty_cache()
+            except RuntimeError:
+                pass
+            selected = "cpu"
+            info = {**info, "device": "cpu", "cuda_available": False, "reason": failure}
+            events.put({"type": "device_info", **info})
+            model, dtype_name, load_seconds, warm_seconds = load_and_warmup("cpu")
 
         class Cancelled(StoppingCriteria):
             def __call__(self, input_ids, scores, **kwargs):
                 return cancel_event.is_set()
 
-        events.put({"type": "ready", "device": selected})
+        events.put({"type": "ready", **info, "load_seconds": load_seconds, "warmup_seconds": warm_seconds,
+                    "startup_seconds": time.perf_counter() - started})
         while True:
             command = commands.get()
             if command is None:
@@ -65,23 +141,12 @@ def _worker_main(commands, events, cancel_event, model_dir: str, device: str):
                 start = time.perf_counter()
                 prepared = prepare_image(command["image_png"])
                 image = Image.open(io.BytesIO(prepared.model_png)).convert("RGB")
-                messages = [{"role": "user", "content": [
-                    {"type": "image", "image": image}, {"type": "text", "text": FORMULA_PROMPT},
-                ]}]
-                inputs = processor.apply_chat_template(
-                    messages, tokenize=True, add_generation_prompt=True, return_dict=True,
-                    return_tensors="pt", enable_thinking=False,
-                ).to(selected)
                 budget = max(16, min(int(command["max_new_tokens"]), 4096))
-                with torch.inference_mode():
-                    output = model.generate(
-                        **inputs, max_new_tokens=budget, do_sample=False,
-                        stopping_criteria=StoppingCriteriaList([Cancelled()]),
-                    )
+                new_tokens = _generate(torch, processor, model, image, selected, budget,
+                                       StoppingCriteriaList([Cancelled()]))
                 if cancel_event.is_set():
                     events.put({"type": "cancelled", "task_id": task_id, "device": selected})
                     continue
-                new_tokens = output[:, inputs["input_ids"].shape[1]:]
                 eos = model.generation_config.eos_token_id
                 eos = eos if isinstance(eos, list) else [eos]
                 if new_tokens.shape[1] >= budget and int(new_tokens[0, -1]) not in eos:
@@ -132,8 +197,8 @@ class ModelProcess:
         return self._physical_task is not None
 
     def load(self, model_dir: str, device: str):
-        if device not in {"cpu", "cuda"}:
-            raise ValueError("请选择 CPU 或 CUDA。")
+        if device not in {"cpu", "cuda", "auto"}:
+            raise ValueError("请选择 CPU、CUDA 或自动检测。")
         self.stop()
         self._device = device
         self._cancel_event.clear()
@@ -173,6 +238,7 @@ class ModelProcess:
             task_id = event.get("task_id")
             if kind == "ready":
                 self._ready = True
+                self._device = event["device"]
             if task_id and task_id == self._physical_task and kind in {"result", "error", "cancelled"}:
                 self._physical_task = None
             if task_id and kind in {"result", "error"}:

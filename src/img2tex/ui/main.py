@@ -5,11 +5,13 @@ from datetime import datetime
 from pathlib import Path
 from uuid import uuid4
 
-from PySide6.QtCore import QEvent, QMimeData, QProcess, QProcessEnvironment, Qt, QTimer
+from PySide6.QtCore import QEvent, QMimeData, Qt, QTimer
 from PySide6.QtGui import QAction, QActionGroup, QColor, QFont, QIcon, QImage, QKeySequence, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
+    QDialog,
+    QDialogButtonBox,
     QDockWidget,
     QFileDialog,
     QFormLayout,
@@ -36,7 +38,9 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from img2tex.model_setup import default_model_dir
+from img2tex import __version__
+from img2tex.edition import cpu_only, edition_label
+from img2tex.model_setup import check_model_directory, default_model_dir
 from img2tex.paths import app_data_dir, configure_runtime, resolve_model_path, serialize_model_path
 
 from .preview import FormulaPreview, pixmap_png
@@ -89,12 +93,19 @@ class MainWindow(QMainWindow):
         self._programmatic_edit = False
         self._model_ready = False
         self._loading_model = False
-        self._loaded_model_dir = None
         self._closed = False
-        self._download_output = ""
-        self._downloading_model = False
+        self._initialization_failed = False
+        self._device_reason = ""
+        self._requested_device = "cpu" if cpu_only() else self.store.get_setting("device", "auto")
+        if self._requested_device not in {"cpu", "cuda", "auto"}:
+            self._requested_device = "auto"
+        if cpu_only():
+            self.store.set_setting("device", "cpu")
+        self._device = "cuda" if self._requested_device == "cuda" else "cpu"
+        saved_model = self.store.get_setting("model_dir")
+        self._model_dir = resolve_model_path(saved_model) if saved_model else str(default_model_dir())
         self.tray = None
-        self.setWindowTitle("Img2Tex · 本地公式识别")
+        self.setWindowTitle("Img2Tex · 本地公式识别" + (" · CPU Only" if cpu_only() else ""))
         self.setWindowIcon(app_icon())
         self.resize(1240, 840)
         self.setMinimumSize(880, 600)
@@ -103,6 +114,7 @@ class MainWindow(QMainWindow):
         self._build_history()
         self._build_settings()
         self._build_toolbar()
+        self._build_menu()
         self._style()
         self._refresh_history()
         QApplication.instance().installEventFilter(self)
@@ -117,14 +129,11 @@ class MainWindow(QMainWindow):
         self.editor.textChanged.connect(self._editor_changed)
         self.preview.error.connect(self._preview_error)
         self.preview.rendered.connect(lambda: self.preview_status.setText("本地预览 · KaTeX"))
-        self.download_process = QProcess(self)
-        self.download_process.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
-        self.download_process.readyReadStandardOutput.connect(self._download_log)
-        self.download_process.finished.connect(self._download_finished)
-        self.download_process.errorOccurred.connect(self._download_error)
         if enable_system_integration:
             self._system_integration()
-        self.statusBar().showMessage("就绪 · 导入图片后，选择设备并加载本地模型")
+        self.device_indicator = QLabel("设备准备中")
+        self.statusBar().addPermanentWidget(self.device_indicator)
+        self._notify("即将加载本地模型…")
 
     def _build_ui(self, preview):
         central = QWidget()
@@ -271,50 +280,78 @@ class MainWindow(QMainWindow):
         self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self.history_dock)
 
     def _build_settings(self):
-        self.settings_dock = QDockWidget("模型与设置", self)
-        self.settings_dock.setAllowedAreas(Qt.DockWidgetArea.BottomDockWidgetArea)
-        panel = QWidget()
-        form = QFormLayout(panel)
+        self.settings_dialog = QDialog(self)
+        self.settings_dialog.setWindowTitle("计算设备")
+        self.settings_dialog.setMinimumWidth(400)
+        form = QFormLayout(self.settings_dialog)
         self.device_combo = QComboBox()
-        self.device_combo.addItem("CPU · 通用 / float32", "cpu")
-        self.device_combo.addItem("CUDA · NVIDIA GPU / float16", "cuda")
-        self.device_combo.setCurrentIndex(1 if self.store.get_setting("device", "cpu") == "cuda" else 0)
+        self.device_combo.addItem("CPU · 通用", "cpu")
+        if not cpu_only():
+            self.device_combo.addItem("CUDA · NVIDIA GPU", "cuda")
+        self.device_combo.setCurrentIndex(max(0, self.device_combo.findData(self._device)))
         form.addRow("计算设备", self.device_combo)
-        path_row = QHBoxLayout()
-        saved_model = self.store.get_setting("model_dir")
-        self.model_path = QLineEdit(resolve_model_path(saved_model) if saved_model is not None
-                                    else str(default_model_dir()))
-        self.model_path.setPlaceholderText("选择已下载的 Xiaomi-OCR-0 模型目录")
-        self.model_path.editingFinished.connect(self._save_model_path)
-        path_row.addWidget(self.model_path, 1)
-        self.browse_model_button = QPushButton("浏览…")
-        self.browse_model_button.clicked.connect(self._choose_model_dir)
-        path_row.addWidget(self.browse_model_button)
-        self.load_button = QPushButton("加载模型")
-        self.load_button.clicked.connect(self.load_model)
-        path_row.addWidget(self.load_button)
-        self.download_button = QPushButton("下载固定版本模型")
-        self.download_button.clicked.connect(self.download_model)
-        path_row.addWidget(self.download_button)
-        form.addRow("模型目录", path_row)
-        note = QLabel("CPU 始终可选；切换设备会停止并重新加载模型。首次下载需要网络，日常识别与导出在本机完成。")
-        note.setWordWrap(True)
-        note.setObjectName("muted")
-        form.addRow(note)
-        self.download_log = QPlainTextEdit()
-        self.download_log.setReadOnly(True)
-        self.download_log.setMaximumHeight(90)
-        self.download_log.hide()
-        form.addRow(self.download_log)
-        self.settings_dock.setWidget(panel)
-        self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self.settings_dock)
-        self.device_combo.currentIndexChanged.connect(self._device_changed)
+        self.device_status = QLabel("启动后自动检测；切换设备会重新加载并预热模型。")
+        self.device_status.setWordWrap(True)
+        form.addRow(self.device_status)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Apply | QDialogButtonBox.StandardButton.Close)
+        buttons.button(QDialogButtonBox.StandardButton.Apply).clicked.connect(self.apply_device_settings)
+        buttons.rejected.connect(self.settings_dialog.reject)
+        form.addRow(buttons)
+
+    def _build_menu(self):
+        files = self.menuBar().addMenu("文件")
+        for action in self._input_actions:
+            files.addAction(action)
+        files.addSeparator()
+        for title, callback in [
+            ("保存 PNG…", lambda: self.save_formula("PNG")),
+            ("保存 SVG…", lambda: self.save_formula("SVG")),
+            ("保存可编辑 DOCX…", self.save_docx),
+        ]:
+            files.addAction(title, callback)
+        files.addSeparator()
+        files.addAction("退出", self.close)
+        view = self.menuBar().addMenu("视图")
+        view.addAction(self.history_dock.toggleViewAction())
+        settings = self.menuBar().addMenu("设置")
+        self.settings_action = settings.addAction("计算设备…", self.show_device_settings)
+        self.retry_action = settings.addAction("重新初始化模型", self.retry_model)
+        help_menu = self.menuBar().addMenu("帮助")
+        help_menu.addAction("关于 Img2Tex…", self.show_about)
+
+    def show_device_settings(self):
+        if self._active_task is not None or self._loading_model:
+            return
+        self.device_combo.setCurrentIndex(max(0, self.device_combo.findData(self._device)))
+        self.settings_dialog.open()
+
+    def apply_device_settings(self):
+        if self._active_task is not None or self._loading_model:
+            return
+        device = self.device_combo.currentData()
+        self._requested_device = device
+        self.store.set_setting("device", device)
+        self.settings_dialog.accept()
+        if self._model_ready and self.engine.is_alive and device == self._device:
+            return
+        self._device = device
+        self.load_model(force=True)
+
+    def show_about(self):
+        QMessageBox.about(self, "关于 Img2Tex", f"<h3>Img2Tex</h3>本地公式识别"
+                          f"<p>版本：{__version__}<br>发行类型：{edition_label()}</p>"
+                          "<p>基于 Xiaomi-OCR-0<br>支持离线识别、公式预览与导出</p>")
+
+    def retry_model(self):
+        if self._active_task is None and not self._loading_model:
+            self.load_model(force=True)
 
     def _build_toolbar(self):
         toolbar = QToolBar("主要操作", self)
         toolbar.setMovable(False)
         toolbar.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
         self.addToolBar(toolbar)
+        self._input_actions = []
         for title, callback, shortcut in [
             ("导入图片", self.open_image, QKeySequence.StandardKey.Open),
             ("粘贴图片", self.paste_image, QKeySequence("Ctrl+V")),
@@ -325,6 +362,7 @@ class MainWindow(QMainWindow):
                 action.setShortcut(QKeySequence(shortcut))
                 action.setShortcutContext(Qt.ShortcutContext.WindowShortcut)
             toolbar.addAction(action)
+            self._input_actions.append(action)
         toolbar.addSeparator()
         self.recognize_button = QPushButton("开始识别")
         self.recognize_button.setObjectName("primary")
@@ -337,8 +375,7 @@ class MainWindow(QMainWindow):
         spacer = QWidget()
         spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         toolbar.addWidget(spacer)
-        toolbar.addAction(self.history_dock.toggleViewAction())
-        toolbar.addAction(self.settings_dock.toggleViewAction())
+
 
     def _style(self):
         self.setStyleSheet("""
@@ -384,50 +421,44 @@ class MainWindow(QMainWindow):
             return True
         return super().eventFilter(watched, event)
 
-    def _save_model_path(self):
-        path = resolve_model_path(self.model_path.text().strip())
-        self.model_path.setText(path)
+    def _resolve_model_directory(self):
+        saved = self.store.get_setting("model_dir")
+        path = resolve_model_path(saved) if saved else str(default_model_dir())
+        notice = ""
+        try:
+            check_model_directory(path)
+        except ValueError:
+            bundled = default_model_dir()
+            if not saved or Path(path) == bundled:
+                raise
+            check_model_directory(bundled)
+            path = str(bundled)
+            notice = "原模型路径不可用，已切换至随包模型。"
+        self._model_dir = path
         self.store.set_setting("model_dir", serialize_model_path(path))
-        if (self._model_ready or self._loading_model) and path != self._loaded_model_dir:
-            self.cancel_recognition()
-            self.engine.stop()
-            self._model_ready = False
-            self._loading_model = False
-            self.progress.hide()
-            self.load_button.setEnabled(True)
-            self._notify("模型目录已更改，请重新加载模型")
-        return path
+        return notice
 
-    def _choose_model_dir(self):
-        path = QFileDialog.getExistingDirectory(self, "选择本地模型目录", self.model_path.text())
-        if path:
-            self.model_path.setText(path)
-            self._save_model_path()
-
-    def _device_changed(self):
-        self.store.set_setting("device", self.device_combo.currentData())
-        self.load_model()
-
-    def load_model(self):
-        if self._downloading_model:
-            self._notify("模型正在下载，请等待完成后再加载")
-            return
-        path = self.model_path.text().strip()
-        if not path:
-            self._notify("请先选择模型目录，或下载固定版本模型")
+    def load_model(self, force=False):
+        if not force and (self._loading_model or (self._model_ready and self.engine.is_alive)):
             return
         self.cancel_recognition()
         self.engine.stop()
         self._model_ready = False
         self._loading_model = False
-        path = self._save_model_path()
-        self._loaded_model_dir = path
-        self._loading_model = True
-        self.load_button.setEnabled(False)
-        self.progress.show()
-        self._notify(f"正在加载 {self.device_combo.currentData().upper()} 模型…")
+        self._initialization_failed = False
         try:
-            self.engine.load(path, self.device_combo.currentData())
+            notice = self._resolve_model_directory()
+        except (ValueError, OSError) as exc:
+            self.handle_event({"type": "error", "message": f"{exc} 请完整解压离线包并检查模型文件。"})
+            return
+        self._loading_model = True
+        self.settings_action.setEnabled(False)
+        self.retry_action.setEnabled(False)
+        self.progress.show()
+        self._device_reason = notice
+        self._notify(notice + "正在准备本地模型…")
+        try:
+            self.engine.load(self._model_dir, self._requested_device)
         except (ValueError, RuntimeError, OSError) as exc:
             self.handle_event({"type": "error", "message": str(exc)})
 
@@ -444,20 +475,38 @@ class MainWindow(QMainWindow):
         task_id = event.get("task_id")
         if task_id is not None and task_id != self._active_task:
             return
-        if event.get("device") and event["device"] != self.device_combo.currentData():
+        if task_id is not None and event.get("device", self._device) != self._device:
             return
-        if kind == "loading":
-            self._notify(f"正在加载 {self.device_combo.currentData().upper()} 模型…")
+        if kind == "device_info":
+            self._device = event["device"]
+            reason = event.get("reason", "")
+            if reason:
+                self._device_reason = reason
+            self.device_combo.setCurrentIndex(max(0, self.device_combo.findData(self._device)))
+            available = event.get("cuda_available")
+            if self.device_combo.count() > 1:
+                self.device_combo.model().item(1).setEnabled(available is not False)
+            self.device_status.setText(event.get("gpu") or reason or "当前使用 CPU；选择 CUDA 时会检测兼容性。")
+            self.device_indicator.setText(f"{self._device.upper()} · 准备中")
+        elif kind in {"loading", "warming"}:
+            selected = event.get("device", self._device)
+            label = "自动检测设备并加载" if selected == "auto" else selected.upper() + (" 正在预热" if kind == "warming" else " 正在加载")
+            self.device_indicator.setText(label)
+            self._notify(label + "本地模型…")
         elif kind == "ready":
             if not self.engine.is_alive:
                 return
             self._model_ready = True
             self._loading_model = False
-            if self._loaded_model_dir is None:
-                self._loaded_model_dir = self.model_path.text().strip()
-            self.load_button.setEnabled(True)
+            self._device = event["device"]
+            self._initialization_failed = False
+            self.settings_action.setEnabled(True)
+            self.retry_action.setEnabled(True)
+            self.device_combo.setCurrentIndex(max(0, self.device_combo.findData(self._device)))
             self.progress.hide()
-            self._notify(f"{self.device_combo.currentData().upper()} 模型已就绪")
+            self.device_indicator.setText(f"{self._device.upper()} · 已就绪")
+            reason = event.get("reason") or self._device_reason
+            self._notify(f"{self._device.upper()} 模型已就绪" + (f" · {reason}" if reason else ""))
         elif kind == "result" and self._active_task is not None:
             task_image = self._task_image
             edited = self._editor_revision != self._task_editor_revision
@@ -482,24 +531,31 @@ class MainWindow(QMainWindow):
             if task_id is None:
                 self._model_ready = False
                 self._loading_model = False
+                self._initialization_failed = True
+                self.device_indicator.setText("模型准备失败")
             self._active_task = None
             self._task_image = None
             self._busy(False)
-            self.load_button.setEnabled(True)
+            self.settings_action.setEnabled(True)
+            self.retry_action.setEnabled(True)
             self._notify(event.get("message", "已取消识别") if kind == "error" else "已取消识别")
 
     def _busy(self, busy):
         self.recognize_button.setEnabled(not busy)
         self.cancel_button.setEnabled(busy)
-        self.progress.setVisible(busy)
+        self.progress.setVisible(busy or self._loading_model)
+        self.settings_action.setEnabled(not busy and not self._loading_model)
+        self.retry_action.setEnabled(not busy and not self._loading_model)
 
     def start_recognition(self):
         if self.current_image is None:
             self._notify("请先导入或粘贴一张公式图片")
             return
         if not self._model_ready:
-            self.settings_dock.show()
-            self._notify("请先选择设备并点击「加载模型」；首次使用可点击「下载固定版本模型」")
+            self._auto_recognition_pending = True
+            self._auto_editor_revision = self._editor_revision
+            self._busy(True)
+            self._advance_auto_recognition()
             return
         if self._active_task is not None:
             return
@@ -508,7 +564,7 @@ class MainWindow(QMainWindow):
         self._task_image = self.current_image
         self._task_editor_revision = self._editor_revision
         self._busy(True)
-        self._notify(f"正在本机 {self.device_combo.currentData().upper()} 识别… 可继续编辑源码")
+        self._notify(f"正在本机 {self._device.upper()} 识别… 可继续编辑源码")
         try:
             self.engine.recognize(self.current_image.model_png, self._active_task)
         except (ValueError, RuntimeError, OSError) as exc:
@@ -531,10 +587,14 @@ class MainWindow(QMainWindow):
     def _advance_auto_recognition(self):
         if not self._auto_recognition_pending or self._active_task is not None:
             return
-        if self._loading_model or self._downloading_model:
+        if self._loading_model:
             return
         if not self._model_ready:
             self._auto_recognition_pending = False
+            if self._initialization_failed:
+                self._busy(False)
+                self._notify("模型准备失败，请从「设置 → 重新初始化模型」重试。")
+                return
             self.load_model()
             if self._loading_model:
                 self._auto_recognition_pending = True
@@ -609,7 +669,6 @@ class MainWindow(QMainWindow):
         else:
             self._notify("剪贴板中没有图片，请先复制图片或截图")
         if pasted:
-            self._save_model_path()
             self._auto_recognition_pending = True
             self._auto_editor_revision = self._editor_revision
             self.result_info.setText("图片已粘贴 · 自动识别")
@@ -805,66 +864,6 @@ class MainWindow(QMainWindow):
             else:
                 self._notify(f"已保存可编辑 OMML 公式：{path}")
 
-    def download_model(self):
-        if self._downloading_model:
-            return
-        path = self.model_path.text().strip()
-        if not path:
-            self._notify("请先选择下载目录")
-            return
-        path = self._save_model_path()
-        # Transformers may mmap weight files on Windows. Release the process and
-        # logically invalidate results before the downloader replaces those files.
-        self.cancel_recognition()
-        self.engine.stop()
-        self._model_ready = False
-        self._loading_model = False
-        self._downloading_model = True
-        self.progress.hide()
-        self._model_controls_enabled(False)
-        self.download_log.clear()
-        self.download_log.show()
-        self._download_output = ""
-        self.download_button.setEnabled(False)
-        environment = QProcessEnvironment.systemEnvironment()
-        environment.insert("PYTHONNOUSERSITE", "1")
-        environment.insert("PYTHONUTF8", "1")
-        self.download_process.setProcessEnvironment(environment)
-        arguments = [] if getattr(sys, "frozen", False) else ["-s", "-m", "img2tex"]
-        arguments.extend(["--download-model", "--model-dir", path])
-        self.download_process.start(sys.executable, arguments)
-        self._notify("正在下载固定版本模型，请查看模型设置中的进度")
-
-    def _download_log(self):
-        chunk = bytes(self.download_process.readAllStandardOutput()).decode("utf-8", errors="replace")
-        self._download_output = (self._download_output + chunk)[-16000:]
-        self.download_log.setPlainText(self._download_output)
-        self.download_log.verticalScrollBar().setValue(self.download_log.verticalScrollBar().maximum())
-
-    def _download_finished(self, code, status):
-        self._download_log()
-        self._downloading_model = False
-        self._model_controls_enabled(True)
-        self.download_button.setEnabled(True)
-        if code == 0 and status == QProcess.ExitStatus.NormalExit:
-            self._notify("模型下载完成，点击「加载模型」即可开始识别")
-        else:
-            self._auto_recognition_pending = False
-            self._busy(False)
-            self._notify("模型下载失败，请查看下方日志；可修正网络后重试")
-
-    def _download_error(self, error):
-        self._auto_recognition_pending = False
-        self._busy(False)
-        self._downloading_model = False
-        self._model_controls_enabled(True)
-        self.download_button.setEnabled(True)
-        self._notify(f"无法启动模型下载：{self.download_process.errorString()}")
-
-    def _model_controls_enabled(self, enabled):
-        for widget in (self.model_path, self.browse_model_button, self.load_button, self.device_combo):
-            widget.setEnabled(enabled)
-
     def _system_integration(self):
         if QSystemTrayIcon.isSystemTrayAvailable():
             self.tray = QSystemTrayIcon(self.windowIcon(), self)
@@ -893,9 +892,6 @@ class MainWindow(QMainWindow):
             self.engine.stop()
             if self.tray:
                 self.tray.hide()
-            if self.download_process.state() != QProcess.ProcessState.NotRunning:
-                self.download_process.kill()
-                self.download_process.waitForFinished(1500)
             if self._owns_store:
                 self.store.close()
         super().closeEvent(event)
@@ -913,4 +909,5 @@ def run() -> int:
         QMessageBox.critical(None, "Img2Tex 无法启动", f"无法打开应用数据，请检查目录权限或历史数据库：\n{exc}")
         return 1
     window.show()
+    QTimer.singleShot(0, window.load_model)
     return app.exec()

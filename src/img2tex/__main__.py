@@ -16,7 +16,7 @@ def main() -> int:
     parser.add_argument("--model-dir", type=Path)
     parser.add_argument("--check-device", action="store_true")
     parser.add_argument("--smoke", type=Path, help="用实际模型识别一张图，并输出 JSON")
-    parser.add_argument("--device", choices=["cpu", "cuda"], default="cpu")
+    parser.add_argument("--device", choices=["cpu", "cuda", "auto"], default="auto")
     parser.add_argument("--max-tokens", type=int, default=1024)
     parser.add_argument("--output", type=Path)
     parser.add_argument("--timeout", type=int, default=600)
@@ -35,13 +35,15 @@ def main() -> int:
             import torch
 
             from . import __version__
+            from .edition import cpu_only, edition_label
             from .paths import app_data_dir, is_portable
+            available = False if cpu_only() or torch.version.cuda is None else torch.cuda.is_available()
             print(json.dumps({
                 "version": __version__, "portable": is_portable(), "data_dir": str(app_data_dir()),
                 "default_model_dir": str(default_model_dir()), "python_executable": sys.executable,
-                "torch": torch.__version__, "cpu": True, "cuda": torch.cuda.is_available(),
+                "torch": torch.__version__, "edition": edition_label(), "cpu": True, "cuda": available,
                 "cuda_runtime": torch.version.cuda,
-                "gpu": torch.cuda.get_device_name(0) if torch.cuda.is_available() else None,
+                "gpu": torch.cuda.get_device_name(0) if available else None,
             }, ensure_ascii=False), flush=True)
             return 0
         if args.smoke:
@@ -56,6 +58,7 @@ def main() -> int:
                 while time.monotonic() < deadline:
                     for event in engine.poll():
                         if event["type"] == "ready" and not sent:
+                            initialization = event
                             engine.recognize(args.smoke.read_bytes(), uuid.uuid4().hex, args.max_tokens)
                             sent = True
                         elif event["type"] == "error":
@@ -63,6 +66,7 @@ def main() -> int:
                         elif event["type"] == "result":
                             result = event
                             result["total_seconds_including_load"] = time.perf_counter() - started
+                            result["initialization"] = initialization
                             break
                     if result:
                         break

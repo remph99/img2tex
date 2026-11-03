@@ -7,6 +7,9 @@
 #ifndef ReleaseDir
   #error ReleaseDir must be supplied by the release script
 #endif
+#ifndef EditionSuffix
+  #define EditionSuffix ""
+#endif
 
 [Setup]
 AppId={{B8353E67-ECF3-4D65-9479-145AB815BFD8}
@@ -28,7 +31,7 @@ AppReadmeFile={app}\ReadMe.txt
 SetupIconFile=..\..\src\img2tex\assets\app.ico
 VersionInfoVersion={#AppVersion}.0
 OutputDir={#ReleaseDir}
-OutputBaseFilename=Img2Tex-{#AppVersion}-Windows-x64-Setup
+OutputBaseFilename=Img2Tex-{#AppVersion}-Windows-x64-Setup{#EditionSuffix}
 Compression=lzma2/fast
 SolidCompression=yes
 LZMANumBlockThreads=4

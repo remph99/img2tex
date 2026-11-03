@@ -43,6 +43,9 @@ def stage_runtime(runtime: Path, target: Path, *, portable: bool):
     runtime, target = Path(runtime), Path(target)
     target.mkdir(parents=True, exist_ok=False)
     shutil.copy2(runtime / "Img2Tex.exe", target / "Img2Tex.exe")
+    metadata_path = runtime / "img2tex-runtime.json"
+    metadata = json.loads(metadata_path.read_text(encoding="utf8")) if metadata_path.is_file() else {"edition": "full"}
+    (target / "img2tex-runtime.json").write_text(json.dumps(metadata, indent=2), encoding="utf8")
     shutil.copytree(runtime / "_internal", target / "_internal",
                     ignore=shutil.ignore_patterns("__pycache__", ".pytest_cache", "*.log"))
     model_target = target / "models" / "xiaomi-ocr-0"
@@ -60,6 +63,7 @@ def stage_runtime(runtime: Path, target: Path, *, portable: bool):
         (target / "data/ReadMe.txt").write_text("此目录在运行时保存本机数据，发行前请勿加入历史或日志。\n", encoding="utf8")
     manifest = {
         "product": "Img2Tex", "version": __version__, "edition": "portable" if portable else "installed",
+        "runtime": metadata,
         "model_id": MODEL_ID, "model_revision": MODEL_REVISION, "model_sha256": WEIGHT_SHA256,
         "files": {p.relative_to(target).as_posix(): sha256(p) for p in sorted(target.rglob("*")) if p.is_file()},
     }
@@ -80,9 +84,9 @@ def create_release_directory(output: Path):
         raise FileExistsError("Choose a new output directory; previous release files are preserved.") from exc
 
 
-def compile_installer(compiler, payload, output):
+def compile_installer(compiler, payload, output, suffix=""):
     command = [str(compiler), f"/DAppVersion={__version__}", f"/DPayloadDir={payload}",
-               f"/DReleaseDir={output}", str(ROOT / "packaging/windows/Img2Tex.iss")]
+               f"/DReleaseDir={output}", f"/DEditionSuffix={suffix}", str(ROOT / "packaging/windows/Img2Tex.iss")]
     result = subprocess.run(command, check=False, capture_output=True, text=True, encoding="utf8", errors="replace")
     (ROOT / "build/installer-compile.log").write_text(result.stdout + result.stderr, encoding="utf8")
     if result.returncode and "DiskSpanning" in result.stdout + result.stderr:
@@ -95,27 +99,38 @@ def compile_installer(compiler, payload, output):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--runtime", type=Path, default=ROOT / "dist/Img2Tex")
+    parser.add_argument("--edition", choices=["full", "cpuonly"], default="full")
+    parser.add_argument("--portable-only", action="store_true")
+    parser.add_argument("--runtime", type=Path)
     parser.add_argument("--compiler", type=Path, default=ROOT / "build/tools/InnoSetup/ISCC.exe")
-    parser.add_argument("--output", type=Path, default=ROOT / "release" / __version__)
+    parser.add_argument("--output", type=Path)
     args = parser.parse_args()
+    suffix = "-cpuonly" if args.edition == "cpuonly" else ""
+    args.runtime = args.runtime or ROOT / "dist" / args.edition / "Img2Tex"
+    args.output = args.output or ROOT / "release" / (__version__ + suffix)
+    metadata = json.loads((args.runtime / "img2tex-runtime.json").read_text(encoding="utf8"))
+    if metadata["edition"] != args.edition:
+        raise ValueError("Runtime edition does not match the requested release")
     create_release_directory(args.output)
     validate_runtime(args.runtime)
-    if not args.compiler.is_file():
+    if not args.portable_only and not args.compiler.is_file():
         raise FileNotFoundError("Inno Setup compiler is missing")
     stage_parent = ROOT / "build/release"
     stage_parent.mkdir(parents=True, exist_ok=True)
     stage = Path(tempfile.mkdtemp(prefix=f"{__version__}-", dir=stage_parent))
     installer_payload = stage / "installer"
     portable_payload = stage / "portable/Img2Tex"
-    for folder, portable in [(installer_payload, False), (portable_payload, True)]:
+    payloads = [(portable_payload, True)] if args.portable_only else [(installer_payload, False), (portable_payload, True)]
+    for folder, portable in payloads:
         stage_runtime(args.runtime, folder, portable=portable)
         print(f"Staged clean payload: {folder}", flush=True)
-    portable_zip = args.output / f"Img2Tex-{__version__}-Windows-x64-Portable.zip"
+    portable_zip = args.output / f"Img2Tex-{__version__}-Windows-x64-Portable{suffix}.zip"
     with ThreadPoolExecutor(max_workers=2) as executor:
-        installer_job = executor.submit(compile_installer, args.compiler.resolve(), installer_payload, args.output.resolve())
+        installer_job = None if args.portable_only else executor.submit(
+            compile_installer, args.compiler.resolve(), installer_payload, args.output.resolve(), suffix)
         portable_job = executor.submit(create_portable_zip, portable_payload, portable_zip)
-        installer_job.result()
+        if installer_job:
+            installer_job.result()
         portable_job.result()
     with zipfile.ZipFile(portable_zip) as archive:
         bad = archive.testzip()
@@ -123,15 +138,15 @@ def main():
             raise ValueError(f"ZIP integrity failure: {bad}")
     bins = list(args.output.glob("*-Setup-*.bin"))
     if bins:
-        with zipfile.ZipFile(args.output / f"Img2Tex-{__version__}-Windows-x64-Setup.zip", "w", allowZip64=True) as archive:
-            for path in sorted(bins + list(args.output.glob("*-Setup.exe"))):
+        with zipfile.ZipFile(args.output / f"Img2Tex-{__version__}-Windows-x64-Setup{suffix}.zip", "w", allowZip64=True) as archive:
+            for path in sorted(bins + list(args.output.glob(f"*-Setup{suffix}.exe"))):
                 archive.write(path, path.name)
     artifacts = sorted(p for p in args.output.iterdir() if p.suffix.lower() in {".exe", ".zip", ".bin"})
     (args.output / "SHA256SUMS.txt").write_text(
         "".join(f"{sha256(p)}  {p.name}\n" for p in artifacts), encoding="ascii")
-    build = {"version": __version__, "built_utc": datetime.now(UTC).isoformat(), "stage": str(stage),
+    build = {"version": __version__, "runtime_edition": args.edition, "built_utc": datetime.now(UTC).isoformat(), "stage": str(stage),
              "artifacts": [{"name": p.name, "bytes": p.stat().st_size, "sha256": sha256(p)} for p in artifacts]}
-    (ROOT / "build/release-build.json").write_text(json.dumps(build, indent=2), encoding="utf8")
+    (ROOT / f"build/release-build{suffix}.json").write_text(json.dumps(build, indent=2), encoding="utf8")
     print(json.dumps(build, indent=2), flush=True)
 
 
